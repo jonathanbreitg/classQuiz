@@ -1,0 +1,11 @@
+export const CODE_LENGTH = 4;
+export const CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+export const MAX_PLAYERS_CAP = 100;
+export const MINIGAME_SECONDS = 20;
+export const INTER_STAGE_SECONDS = 20;
+export const READY_COUNTDOWN_SECONDS = 3;
+export const PODIUM_REVEAL_SECONDS = 3;
+export const BONUS_MAX = 6;
+export const PAIRS_PER_ROUND = 6;
+export const NICKNAME_MAX = 20;
+export const STALE_MATCH_HOURS = 6;
