@@ -1,6 +1,6 @@
 import { gradeRound } from '../lib/grading.js';
 
-const PAIR_COLORS = ['var(--p0)', 'var(--p1)', 'var(--p2)', 'var(--p3)', 'var(--p4)', 'var(--p5)'];
+const LINE_COLOR = 'var(--primary)';
 const N       = 14;       // chain segments (N+1 points)
 const GRAVITY = 0.28;     // px/frame² downward pull
 const DAMPING = 0.986;    // velocity multiplier per frame (1=no damping)
@@ -130,9 +130,6 @@ export function createMatchingGame({ pairs, onSubmit }) {
 
   // connections: wordPairIdx → defPairIdx
   const connections = {};
-  // colorSlots: wordPairIdx → 0-5 palette index
-  const colorSlots = {};
-  let nextSlot = 0;
 
   // chains: wordPairIdx → { chain, pathEl }
   const chains = new Map();
@@ -212,24 +209,15 @@ export function createMatchingGame({ pairs, onSubmit }) {
     return p;
   }
 
-  // ── Color ────────────────────────────────────────────────
-  function colorFor(wordPairIdx) {
-    if (colorSlots[wordPairIdx] === undefined) {
-      colorSlots[wordPairIdx] = nextSlot++ % PAIR_COLORS.length;
-    }
-    return PAIR_COLORS[colorSlots[wordPairIdx]];
-  }
-
-  function applyBoxColors() {
-    for (const b of [...wordEls, ...defEls]) delete b.dataset.pair;
+  // ── Paired class ─────────────────────────────────────────
+  function applyPairedClass() {
+    for (const b of [...wordEls, ...defEls]) b.classList.remove('match-box--paired');
     for (const [wStr, dIdx] of Object.entries(connections)) {
       const wIdx = +wStr;
-      const slot = colorSlots[wIdx];
-      if (slot === undefined) continue;
       const we = wordEls.find(e => +e.dataset.pairIdx === wIdx);
       const de = defEls.find(e => +e.dataset.pairIdx === dIdx);
-      if (we) we.dataset.pair = slot;
-      if (de) de.dataset.pair = slot;
+      if (we) we.classList.add('match-box--paired');
+      if (de) de.classList.add('match-box--paired');
     }
   }
 
@@ -278,19 +266,14 @@ export function createMatchingGame({ pairs, onSubmit }) {
     // Unlink old connections
     if (connections[wIdx] !== undefined) {
       removeChain(wIdx);
-      const old = defEls.find(e => +e.dataset.pairIdx === connections[wIdx]);
-      if (old) delete old.dataset.pair;
     }
     for (const [w, d] of Object.entries(connections)) {
       if (+d === dIdx && +w !== wIdx) {
         removeChain(+w);
-        const oldW = wordEls.find(e => +e.dataset.pairIdx === +w);
-        if (oldW) delete oldW.dataset.pair;
         delete connections[+w];
       }
     }
 
-    colorFor(wIdx);
     connections[wIdx] = dIdx;
 
     // Use drag chain (carries physics state) or create fresh
@@ -299,18 +282,19 @@ export function createMatchingGame({ pairs, onSubmit }) {
       chain = dragEntry.chain;
       pathEl = dragEntry.pathEl;
       pathEl.classList.remove('conn-line--drag');
-      pathEl.setAttribute('stroke', colorFor(wIdx));
+      pathEl.setAttribute('stroke', LINE_COLOR);
       dragEntry = null;
     } else {
       const we = wordEdge(wIdx), de = defEdge(dIdx);
       chain = new Chain();
       chain.init(we.x, we.y, de.x, de.y);
-      pathEl = makePath(colorFor(wIdx));
+      pathEl = makePath(LINE_COLOR);
     }
-    chain.pinB = defEdge(dIdx); // pin both ends
+    chain.pinA = wordEdge(wIdx);
+    chain.pinB = defEdge(dIdx);
     chains.set(wIdx, {chain, pathEl});
 
-    applyBoxColors();
+    applyPairedClass();
     startLoop();
 
     if (Object.keys(connections).length === 6) {
@@ -321,7 +305,7 @@ export function createMatchingGame({ pairs, onSubmit }) {
   function disconnect(wIdx) {
     removeChain(wIdx);
     delete connections[wIdx];
-    applyBoxColors();
+    applyPairedClass();
   }
 
   // ── Pointer events ───────────────────────────────────────
@@ -374,7 +358,7 @@ export function createMatchingGame({ pairs, onSubmit }) {
 
     drag = {side, pairIdx};
 
-    // Create drag chain
+    // Create drag chain pinned at both ends (box edge ↔ pointer)
     const chain = new Chain();
     const ptr   = svgXY(e.clientX, e.clientY);
     if (side === 'word') {
@@ -382,9 +366,9 @@ export function createMatchingGame({ pairs, onSubmit }) {
       chain.init(edge.x, edge.y, ptr.x, ptr.y, inheritChain);
     } else {
       const edge = defEdge(pairIdx);
-      chain.init(ptr.x, ptr.y, edge.x, edge.y, inheritChain);
+      chain.init(edge.x, edge.y, ptr.x, ptr.y, inheritChain);
     }
-    chain.pinB = null; // free end follows pointer
+    // pinA = box edge, pinB = pointer (both set by init, both ends pinned)
 
     const pathEl = makePath('rgba(255,255,255,0.55)', 'conn-line--drag');
     dragEntry = {chain, pathEl};
@@ -396,23 +380,11 @@ export function createMatchingGame({ pairs, onSubmit }) {
     e.preventDefault();
     const ptr = svgXY(e.clientX, e.clientY);
 
-    if (drag.side === 'word') {
-      dragEntry.chain.pinA = wordEdge(drag.pairIdx);
-      dragEntry.chain.pinB = null;
-      // update free end position (tip of chain tracks pointer)
-      dragEntry.chain.pts[N].px = dragEntry.chain.pts[N].x;
-      dragEntry.chain.pts[N].py = dragEntry.chain.pts[N].y;
-      dragEntry.chain.pts[N].x = ptr.x;
-      dragEntry.chain.pts[N].y = ptr.y;
-    } else {
-      dragEntry.chain.pinA = ptr; // def-side drag: A is at pointer
-      dragEntry.chain.pinB = null;
-      const edge = defEdge(drag.pairIdx);
-      dragEntry.chain.pts[N].px = dragEntry.chain.pts[N].x;
-      dragEntry.chain.pts[N].py = dragEntry.chain.pts[N].y;
-      dragEntry.chain.pts[N].x = edge.x;
-      dragEntry.chain.pts[N].y = edge.y;
-    }
+    // Both ends always pinned: box edge stays at pinA, pointer tracks as pinB
+    dragEntry.chain.pinA = drag.side === 'word'
+      ? wordEdge(drag.pairIdx)
+      : defEdge(drag.pairIdx);
+    dragEntry.chain.pinB = ptr;
 
     // Highlight candidate target
     el.querySelectorAll('.match-box--candidate').forEach(b => b.classList.remove('match-box--candidate'));
@@ -478,7 +450,7 @@ export function createMatchingGame({ pairs, onSubmit }) {
       const side     = box.dataset.side;
       const pairIdx  = +box.dataset.pairIdx;
       const iconEl   = box.querySelector('.match-box__icon');
-      delete box.dataset.pair;
+      box.classList.remove('match-box--paired', 'match-box--selected', 'match-box--candidate');
 
       let correct;
       if (side === 'word') {

@@ -204,7 +204,7 @@ export function mountPlay(container, code) {
             </div>
             <div class="game-timer-num" id="game-timer">—</div>
           </div>
-          <div id="game-area" style="flex:1;display:flex;flex-direction:column;min-height:0;"></div>
+          <div id="game-area" style="flex:1;display:flex;flex-direction:column;min-height:0;visibility:hidden;"></div>
         </div>
       </div>
     `;
@@ -258,6 +258,8 @@ export function mountPlay(container, code) {
         showCd(n);
       } else {
         hideCd();
+        const gameArea = container.querySelector('#game-area');
+        if (gameArea) gameArea.style.visibility = '';
         const gameElapsed = elapsed - cntdownMs;
         const remaining   = Math.max(0, totalMs - gameElapsed);
         const pct         = remaining / totalMs;
