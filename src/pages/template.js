@@ -1,4 +1,5 @@
 import { navigate } from '../router.js';
+import { icon } from '../lib/icons.js';
 import { db, rtdb } from '../firebase.js';
 import {
   doc, getDoc, addDoc, collection, serverTimestamp as fsTimestamp,
@@ -44,7 +45,7 @@ function render(container, template) {
 
       <div class="template-actions">
         <button class="btn btn--primary btn--full btn--lg" id="start-btn">▶ Start a game</button>
-        <button class="btn btn--secondary btn--full" id="fork-btn">⑂ Fork &amp; edit</button>
+        <button class="btn btn--secondary btn--full" id="fork-btn">${icon('fork')} Fork &amp; edit</button>
         <button class="btn btn--secondary btn--full" id="home-btn">← Home</button>
       </div>
 

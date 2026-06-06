@@ -1,10 +1,11 @@
 import { rankPlayers } from '../lib/ranking.js';
 
-// Returns a DOM element showing a ranked leaderboard
-export function createLeaderboard(players) {
+export function createLeaderboard(players, { currentRound = null, gridMode = false } = {}) {
   const ranked = rankPlayers(players);
+  const maxScore = ranked.reduce((m, p) => Math.max(m, p.totalScore), 1);
+
   const el = document.createElement('div');
-  el.className = 'leaderboard';
+  el.className = gridMode ? 'leaderboard leaderboard--grid' : 'leaderboard';
 
   if (ranked.length === 0) {
     el.innerHTML = '<p style="color:var(--text-3);text-align:center;padding:20px;">No players yet</p>';
@@ -16,14 +17,21 @@ export function createLeaderboard(players) {
     row.className = 'lb-row';
     row.style.animationDelay = `${ranked.indexOf(p) * 0.05}s`;
 
-    const rankDisplay = p.rank <= 3
-      ? ['🥇', '🥈', '🥉'][p.rank - 1]
-      : `#${p.rank}`;
+    const barPct = maxScore > 0 ? (p.totalScore / maxScore) * 100 : 0;
+    const chipClass = p.rank <= 3 ? ` lb-rankchip--${p.rank}` : '';
+
+    const delta = currentRound !== null
+      ? (p.rounds?.[currentRound]?.score ?? null)
+      : null;
+    const deltaHtml = delta !== null
+      ? `<span class="lb-delta">+${delta}</span>`
+      : '';
 
     row.innerHTML = `
-      <span class="lb-rank lb-rank--${p.rank}">${rankDisplay}</span>
+      <div class="lb-bar" style="width:${barPct.toFixed(1)}%"></div>
+      <span class="lb-rankchip${chipClass}">${p.rank}</span>
       <span class="lb-name">${escHtml(p.nickname)}</span>
-      <span class="lb-score">${p.totalScore}</span>
+      <span class="lb-score">${deltaHtml}${p.totalScore}<small>pts</small></span>
     `;
     el.appendChild(row);
   }

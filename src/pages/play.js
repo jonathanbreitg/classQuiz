@@ -22,6 +22,7 @@ export function mountPlay(container, code) {
   let gameInstance = null;
   let tickInterval = null;
   let cdOverlay    = null;
+  let revealTimer  = null;
   const submitted  = {};  // roundIdx → true once submitted
 
   showLoading(container);
@@ -69,6 +70,7 @@ export function mountPlay(container, code) {
       if (currentView !== key) {
         currentView = key;
         clearTick();
+        document.querySelectorAll('.round-result-overlay').forEach(e => e.remove());
         if (gameInstance) { gameInstance.cleanup(); gameInstance = null; }
         renderPlaying();
       } else {
@@ -263,11 +265,14 @@ export function mountPlay(container, code) {
         const gameElapsed = elapsed - cntdownMs;
         const remaining   = Math.max(0, totalMs - gameElapsed);
         const pct         = remaining / totalMs;
-        timerEl.textContent = Math.ceil(remaining / 1000);
-        timerEl.className   = `game-timer-num${pct < 0.25 ? ' game-timer-num--danger' : pct < 0.5 ? ' game-timer-num--warning' : ''}`;
+        const col         = timeColor(pct);
+        timerEl.textContent  = (remaining / 1000).toFixed(1);
+        timerEl.className    = 'game-timer-num';
+        timerEl.style.color  = col;
         if (barEl) {
-          barEl.style.width = `${pct * 100}%`;
-          barEl.className   = `timer-bar${pct < 0.25 ? ' timer-bar--danger' : pct < 0.5 ? ' timer-bar--warning' : ''}`;
+          barEl.style.width      = `${pct * 100}%`;
+          barEl.className        = 'timer-bar';
+          barEl.style.background = col;
         }
         if (remaining === 0 && gameInstance && !submitted[roundIdx]) {
           clearTick(); gameInstance.forceSubmit();
@@ -277,13 +282,17 @@ export function mountPlay(container, code) {
   }
 
   function showCd(n) {
-    if (cdOverlay && cdOverlay._n === n) return;
-    if (cdOverlay) cdOverlay.remove();
-    cdOverlay = document.createElement('div');
-    cdOverlay.className = 'countdown-overlay';
+    if (!cdOverlay) {
+      cdOverlay = document.createElement('div');
+      cdOverlay.className = 'countdown-overlay';
+      document.body.appendChild(cdOverlay);
+    }
+    if (cdOverlay._n === n) return;
     cdOverlay._n = n;
-    cdOverlay.innerHTML = `<div class="countdown-number">${n}</div>`;
-    document.body.appendChild(cdOverlay);
+    const numEl = document.createElement('div');
+    numEl.className = 'countdown-number';
+    numEl.textContent = n;
+    cdOverlay.replaceChildren(numEl);
   }
   function hideCd() { if (cdOverlay) { cdOverlay.remove(); cdOverlay = null; } }
 
@@ -302,7 +311,11 @@ export function mountPlay(container, code) {
     const roundScore   = computeRoundScore(correctPairs, timeBonus);
 
     if (gameInstance) gameInstance.reveal();
-    showRoundResult(correctPairs, timeBonus, roundScore, finished);
+    // Show green/red reveal for 2 seconds before the score overlay
+    revealTimer = setTimeout(() => {
+      revealTimer = null;
+      showRoundResult(correctPairs, timeBonus, roundScore, finished);
+    }, 4000);
 
     try {
       const player       = match.players?.[playerId] || {};
@@ -323,29 +336,23 @@ export function mountPlay(container, code) {
   function showRoundResult(correctPairs, timeBonus, roundScore, finished) {
     const el = document.createElement('div');
     el.className = 'round-result-overlay';
-    el.style.cssText = [
-      'position:fixed;inset:0;background:rgba(10,10,20,0.85)',
-      'backdrop-filter:blur(8px)',
-      'display:flex;flex-direction:column;align-items:center;justify-content:center',
-      'z-index:50;gap:20px;animation:fadeIn 0.25s ease;pointer-events:none',
-    ].join(';');
     el.innerHTML = `
-      <div style="font-size:2.4rem;font-weight:900;">${correctPairs} / 6 correct</div>
-      <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;">
-        <div style="text-align:center;">
-          <div style="font-size:1.8rem;font-weight:900;">${correctPairs}</div>
-          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Pairs</div>
+      <div class="round-result-pill">${correctPairs}/6 correct</div>
+      <div class="round-result-stats">
+        <div class="round-result-stat">
+          <div class="round-result-stat__val">${correctPairs}</div>
+          <div class="round-result-stat__label">Pairs</div>
         </div>
-        <div style="text-align:center;">
-          <div style="font-size:1.8rem;font-weight:900;color:${finished ? 'var(--primary)' : 'var(--text-3)'};">+${timeBonus}</div>
-          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Time bonus</div>
+        <div class="round-result-stat">
+          <div class="round-result-stat__val" style="color:${finished ? 'var(--primary)' : 'var(--text-3)'}">+${timeBonus}</div>
+          <div class="round-result-stat__label">Time bonus</div>
         </div>
-        <div style="text-align:center;">
-          <div style="font-size:2.4rem;font-weight:900;background:linear-gradient(135deg,var(--primary),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">${roundScore}</div>
-          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Points</div>
+        <div class="round-result-stat">
+          <div class="round-result-stat__val round-result-stat__val--score">${roundScore}</div>
+          <div class="round-result-stat__label">Points</div>
         </div>
       </div>
-      <div style="color:var(--text-3);font-size:0.9rem;font-weight:600;">Waiting for others…</div>
+      <div class="round-result-waiting">Waiting for others…</div>
     `;
     document.body.appendChild(el);
   }
@@ -416,6 +423,7 @@ export function mountPlay(container, code) {
 
   function clearTick() {
     if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    if (revealTimer)  { clearTimeout(revealTimer);   revealTimer  = null; }
     hideCd();
   }
 
@@ -425,6 +433,11 @@ export function mountPlay(container, code) {
     document.querySelectorAll('.round-result-overlay,.countdown-overlay').forEach(e => e.remove());
     if (gameInstance) gameInstance.cleanup();
   };
+}
+
+function timeColor(frac) {
+  const f = Math.max(0, Math.min(1, frac));
+  return `hsl(${Math.round(f * 130)} 78% 56%)`;
 }
 
 function showLoading(c) {

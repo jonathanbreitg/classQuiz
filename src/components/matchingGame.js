@@ -1,6 +1,6 @@
 import { gradeRound } from '../lib/grading.js';
 
-const LINE_COLOR = 'var(--primary)';
+const LINE_COLOR = 'rgba(255, 255, 255, 0.35)';
 const N       = 14;       // chain segments (N+1 points)
 const GRAVITY = 0.28;     // px/frame² downward pull
 const DAMPING = 0.986;    // velocity multiplier per frame (1=no damping)

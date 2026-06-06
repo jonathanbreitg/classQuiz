@@ -1,4 +1,5 @@
 import { navigate } from '../router.js';
+import { icon } from '../lib/icons.js';
 import { rtdb, serverNow } from '../firebase.js';
 import {
   ref, onValue, update, serverTimestamp,
@@ -167,12 +168,11 @@ export function mountHost(container, code) {
     container.innerHTML = `
       <div class="page host-page">
         <div class="host-header">
-          <div class="host-code">
-            <span class="host-code__label">Code</span>
-            <span class="host-code__value">${code}</span>
+          <div>
+            <div class="host-head-sub">Round ${match.currentRound + 1} / ${match.template.numRounds}</div>
+            <div class="host-head-title">${esc(match.template.title)}</div>
           </div>
-          <div class="host-title">${esc(match.template.title)}</div>
-          <div style="min-width:120px;text-align:right;">
+          <div>
             ${isHost ? `<button class="btn btn--secondary" id="end-btn">End round</button>` : ''}
           </div>
         </div>
@@ -232,22 +232,25 @@ export function mountHost(container, code) {
 
       if (elapsed < cntdownMs) {
         const n = Math.ceil((cntdownMs - elapsed) / 1000);
-        timerEl.textContent = n;
-        timerEl.className   = 'timer-display';
-        if (barEl) barEl.style.width = '100%';
+        timerEl.textContent  = n;
+        timerEl.className    = 'timer-display';
+        timerEl.style.color  = '';
+        if (barEl) { barEl.style.width = '100%'; barEl.style.background = ''; }
         showCountdown(n);
       } else {
         hideCountdown();
         const gameElapsed = elapsed - cntdownMs;
         const remaining   = Math.max(0, totalMs - gameElapsed);
         const pct         = remaining / totalMs;
-        const secs        = Math.ceil(remaining / 1000);
+        const col         = timeColor(pct);
 
-        timerEl.textContent = secs;
-        timerEl.className   = `timer-display${pct < 0.25 ? ' timer-display--danger' : pct < 0.5 ? ' timer-display--warning' : ''}`;
+        timerEl.textContent  = (remaining / 1000).toFixed(1);
+        timerEl.className    = 'timer-display';
+        timerEl.style.color  = col;
         if (barEl) {
-          barEl.style.width = `${pct * 100}%`;
-          barEl.className   = `timer-bar${pct < 0.25 ? ' timer-bar--danger' : pct < 0.5 ? ' timer-bar--warning' : ''}`;
+          barEl.style.width      = `${pct * 100}%`;
+          barEl.className        = 'timer-bar';
+          barEl.style.background = col;
         }
 
         if (remaining === 0 && isHost) {
@@ -255,17 +258,21 @@ export function mountHost(container, code) {
           setTimeout(() => hostEndRound(), 600);
         }
       }
-    }, 200);
+    }, 100);
   }
 
   function showCountdown(n) {
-    if (countdownEl && countdownEl._n === n) return;
-    if (countdownEl) countdownEl.remove();
-    countdownEl = document.createElement('div');
-    countdownEl.className = 'countdown-overlay';
+    if (!countdownEl) {
+      countdownEl = document.createElement('div');
+      countdownEl.className = 'countdown-overlay';
+      document.body.appendChild(countdownEl);
+    }
+    if (countdownEl._n === n) return;
     countdownEl._n = n;
-    countdownEl.innerHTML = `<div class="countdown-number">${n}</div>`;
-    document.body.appendChild(countdownEl);
+    const numEl = document.createElement('div');
+    numEl.className = 'countdown-number';
+    numEl.textContent = n;
+    countdownEl.replaceChildren(numEl);
   }
   function hideCountdown() {
     if (countdownEl) { countdownEl.remove(); countdownEl = null; }
@@ -311,12 +318,11 @@ export function mountHost(container, code) {
     container.innerHTML = `
       <div class="page host-page">
         <div class="host-header">
-          <div class="host-code">
-            <span class="host-code__label">Code</span>
-            <span class="host-code__value">${code}</span>
+          <div>
+            <div class="host-head-sub">Round ${match.currentRound + 1} results</div>
+            <div class="host-head-title">${esc(match.template.title)}</div>
           </div>
-          <div class="host-title">Round ${match.currentRound + 1} results</div>
-          <div style="min-width:120px;text-align:right;">
+          <div>
             ${isHost ? `<button class="btn btn--secondary" id="next-btn">Next →</button>` : ''}
           </div>
         </div>
@@ -332,7 +338,9 @@ export function mountHost(container, code) {
       </div>
     `;
 
-    container.querySelector('#lb-wrap').appendChild(createLeaderboard(players));
+    container.querySelector('#lb-wrap').appendChild(
+      createLeaderboard(players, { currentRound: match.currentRound, gridMode: true })
+    );
 
     if (isHost) {
       container.querySelector('#next-btn').addEventListener('click', () => {
@@ -369,7 +377,7 @@ export function mountHost(container, code) {
     const players = Object.values(match.players || {});
     container.innerHTML = `
       <div class="page host-page host-podium">
-        <div class="podium-title">🏆 Final Standings</div>
+        <div class="podium-title">${icon('trophy')} Final Standings</div>
         <div id="pod-wrap" style="flex:1;display:flex;flex-direction:column;"></div>
       </div>
     `;
@@ -392,6 +400,11 @@ export function mountHost(container, code) {
     unsubscribe();
     clearTimers();
   };
+}
+
+function timeColor(frac) {
+  const f = Math.max(0, Math.min(1, frac));
+  return `hsl(${Math.round(f * 130)} 78% 56%)`;
 }
 
 function showLoading(container) {

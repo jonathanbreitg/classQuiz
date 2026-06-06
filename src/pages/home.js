@@ -1,4 +1,5 @@
 import { navigate } from '../router.js';
+import { icon } from '../lib/icons.js';
 
 export function mountHome(container) {
   container.innerHTML = `
@@ -24,7 +25,7 @@ export function mountHome(container) {
 
       <div class="home__create">
         <button id="create-btn" class="btn btn--secondary btn--full btn--lg">
-          ✏️ Create a game
+          ${icon('pencil')} Create a game
         </button>
       </div>
     </div>

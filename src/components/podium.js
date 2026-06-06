@@ -1,13 +1,12 @@
 import { buildPodium } from '../lib/ranking.js';
 import { PODIUM_REVEAL_SECONDS } from '../lib/constants.js';
+import { icon } from '../lib/icons.js';
 
-const MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
+const MAX_HEIGHT_PCT = 72; // 1st place step height as % of column
 
-// Returns a DOM element; starts the reveal animation automatically
 export function createPodium(players) {
   const podiumPlayers = buildPodium(players);
 
-  // Group by rank position
   const byRank = {};
   for (const p of podiumPlayers) {
     if (!byRank[p.rank]) byRank[p.rank] = [];
@@ -15,6 +14,7 @@ export function createPodium(players) {
   }
 
   const ranks = Object.keys(byRank).map(Number).sort((a, b) => a - b);
+  const maxScore = Math.max(...podiumPlayers.map(p => p.totalScore), 1);
 
   const el = document.createElement('div');
   el.className = 'podium-wrap';
@@ -23,20 +23,16 @@ export function createPodium(players) {
   stage.className = 'podium-stage';
   el.appendChild(stage);
 
-  // Build columns for positions 1, 2, 3 (only those that exist)
   const columns = {};
   for (const rank of ranks) {
     if (rank > 3) continue;
+    const isFirst = rank === 1;
+
     const col = document.createElement('div');
-    col.className = 'podium-column';
+    col.className = isFirst ? 'podium-column podium-column--first' : 'podium-column';
 
     const playersEl = document.createElement('div');
     playersEl.className = 'podium-players';
-
-    const medal = document.createElement('div');
-    medal.className = 'podium-medal';
-    medal.textContent = MEDALS[rank] ?? '';
-    playersEl.appendChild(medal);
 
     for (const p of byRank[rank]) {
       const nick = document.createElement('div');
@@ -45,16 +41,19 @@ export function createPodium(players) {
       playersEl.appendChild(nick);
     }
 
-    const score = document.createElement('div');
-    score.className = 'podium-score';
+    const scoreEl = document.createElement('div');
+    scoreEl.className = 'podium-score';
     const scores = byRank[rank].map(p => p.totalScore);
-    const uniqueScores = [...new Set(scores)];
-    score.textContent = uniqueScores.join(' / ') + ' pts';
-    playersEl.appendChild(score);
+    scoreEl.textContent = [...new Set(scores)].join(' / ') + ' pts';
+    playersEl.appendChild(scoreEl);
 
     const step = document.createElement('div');
     step.className = `podium-step podium-step--${rank}`;
     step.textContent = rank;
+
+    // Height proportional to score — 1st place is always MAX_HEIGHT_PCT
+    const rankScore = byRank[rank][0].totalScore;
+    step.style.height = `${((rankScore / maxScore) * MAX_HEIGHT_PCT).toFixed(1)}%`;
 
     col.appendChild(playersEl);
     col.appendChild(step);
@@ -62,7 +61,6 @@ export function createPodium(players) {
     columns[rank] = { col, playersEl, step };
   }
 
-  // Reveal bottom-up: highest rank # first (3rd, then 2nd, then 1st)
   const revealOrder = [...ranks].sort((a, b) => b - a);
   let i = 0;
 
@@ -71,20 +69,11 @@ export function createPodium(players) {
     const rank = revealOrder[i++];
     const { playersEl, step } = columns[rank];
     step.classList.add('revealed');
-    setTimeout(() => {
-      playersEl.classList.add('revealed');
-    }, 200);
-    if (i < revealOrder.length) {
-      setTimeout(revealNext, PODIUM_REVEAL_SECONDS * 1000);
-    }
+    setTimeout(() => { playersEl.classList.add('revealed'); }, 200);
+    if (i < revealOrder.length) setTimeout(revealNext, PODIUM_REVEAL_SECONDS * 1000);
   }
 
-  // Start after a short initial pause
   setTimeout(revealNext, 600);
 
   return el;
-}
-
-function escHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
