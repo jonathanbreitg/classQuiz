@@ -5,11 +5,12 @@ import {
   doc, getDoc, addDoc, collection, serverTimestamp as fsTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
-  ref, get, set, serverTimestamp as rtdbTimestamp,
+  ref, get, set, update, serverTimestamp as rtdbTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { generateUniqueCode } from '../lib/codeGen.js';
 import { sampleRounds } from '../lib/poolSampling.js';
 import { STALE_MATCH_HOURS } from '../lib/constants.js';
+import { findStaleCodes } from '../lib/pruning.js';
 
 export async function mountTemplate(container, templateId) {
   showLoading(container);
@@ -70,7 +71,7 @@ function render(container, template) {
         forkedFrom: template.id,
         createdAt: fsTimestamp(),
       });
-      navigate(`/t/${docRef.id}`);
+      navigate(`/edit/${docRef.id}`);
     } catch (err) {
       console.error(err);
       statusEl.textContent = 'Fork failed. Try again.';
@@ -97,23 +98,28 @@ function render(container, template) {
       const hostToken = crypto.randomUUID();
       localStorage.setItem(`hostToken_${code}`, hostToken);
 
+      const createdAt = rtdbTimestamp();
+
+      // FIX 1: pairsPool excluded from RTDB — players fetch it from Firestore.
+      // FIX 2: matchMeta written for lightweight pruning index.
       await set(ref(rtdb, `matches/${code}`), {
         templateId: template.id,
         template: {
           title: template.title,
           numRounds: template.numRounds,
-          pairsPool: template.pairsPool,
           config: template.config,
         },
         hostToken,
         maxPlayers: 100,
+        playerCount: 0,
         state: 'lobby',
         currentRound: -1,
         rounds,
-        createdAt: rtdbTimestamp(),
-        lastActiveAt: rtdbTimestamp(),
-        players: {},
+        createdAt,
+        lastActiveAt: createdAt,
       });
+
+      await set(ref(rtdb, `matchMeta/${code}`), { createdAt });
 
       navigate(`/host/${code}`);
     } catch (err) {
@@ -124,21 +130,23 @@ function render(container, template) {
   });
 }
 
+// FIX 2: reads lightweight matchMeta index instead of full matches tree.
 async function pruneStaleMatches() {
-  const threshold = Date.now() - STALE_MATCH_HOURS * 3600 * 1000;
+  const staleMs = STALE_MATCH_HOURS * 3600 * 1000;
   try {
-    const snap = await get(ref(rtdb, 'matches'));
+    const snap = await get(ref(rtdb, 'matchMeta'));
     if (!snap.exists()) return;
+
+    const staleCodes = findStaleCodes(snap.val(), Date.now(), staleMs);
+    if (!staleCodes.length) return;
+
     const updates = {};
-    snap.forEach(child => {
-      const m = child.val();
-      const lastActive = m.lastActiveAt || m.createdAt || 0;
-      if (lastActive < threshold) updates[child.key] = null;
-    });
-    if (Object.keys(updates).length) {
-      const { update } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
-      await update(ref(rtdb, 'matches'), updates);
+    for (const code of staleCodes) {
+      updates[`matches/${code}`]      = null;
+      updates[`matchPlayers/${code}`] = null;
+      updates[`matchMeta/${code}`]    = null;
     }
+    await update(ref(rtdb, '/'), updates);
   } catch { /* best-effort */ }
 }
 
@@ -152,10 +160,10 @@ function showNotFound(container) {
       <div class="icon">🔍</div>
       <h2>Template not found</h2>
       <p>This link may be invalid or the template was removed.</p>
-      <button class="btn btn--secondary" onclick="navigate('/')">Go home</button>
+      <button class="btn btn--secondary" id="h">Go home</button>
     </div>
   `;
-  container.querySelector('button').addEventListener('click', () => navigate('/'));
+  container.querySelector('#h').addEventListener('click', () => navigate('/'));
 }
 
 function showError(container, msg) {
@@ -164,10 +172,10 @@ function showError(container, msg) {
       <div class="icon">⚠️</div>
       <h2>Something went wrong</h2>
       <p>${escHtml(msg)}</p>
-      <button class="btn btn--secondary">Go home</button>
+      <button class="btn btn--secondary" id="h">Go home</button>
     </div>
   `;
-  container.querySelector('button').addEventListener('click', () => navigate('/'));
+  container.querySelector('#h').addEventListener('click', () => navigate('/'));
 }
 
 function escHtml(str) {

@@ -1,24 +1,46 @@
 import { navigate } from '../router.js';
 import { db } from '../firebase.js';
-import { collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { collection, addDoc, doc, getDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { MINIGAME_SECONDS, INTER_STAGE_SECONDS, BONUS_MAX } from '../lib/constants.js';
 
-export function mountCreate(container) {
-  let pairs = [
-    { word: '', definition: '' },
-    { word: '', definition: '' },
-    { word: '', definition: '' },
-    { word: '', definition: '' },
-    { word: '', definition: '' },
-    { word: '', definition: '' },
-  ];
+export async function mountEdit(container, templateId) {
+  container.innerHTML = `<div class="loading-page"><div class="spinner"></div><span>Loading…</span></div>`;
+  try {
+    const snap = await getDoc(doc(db, 'templates', templateId));
+    if (!snap.exists()) {
+      container.innerHTML = `<div class="page error-page"><div class="icon">🔍</div><h2>Template not found</h2><button class="btn btn--secondary" id="h">Go home</button></div>`;
+      container.querySelector('#h').addEventListener('click', () => navigate('/'));
+      return;
+    }
+    const data = { id: snap.id, ...snap.data() };
+    mountCreate(container, data);
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = `<div class="page error-page"><div class="icon">⚠️</div><h2>Failed to load</h2><button class="btn btn--secondary" id="h">Go home</button></div>`;
+    container.querySelector('#h').addEventListener('click', () => navigate('/'));
+  }
+}
+
+export function mountCreate(container, initialData = null) {
+  const isEdit = !!initialData;
+
+  let pairs = initialData?.pairsPool
+    ? initialData.pairsPool.map(p => ({ word: p.word, definition: p.definition }))
+    : [
+        { word: '', definition: '' },
+        { word: '', definition: '' },
+        { word: '', definition: '' },
+        { word: '', definition: '' },
+        { word: '', definition: '' },
+        { word: '', definition: '' },
+      ];
 
   function render() {
     container.innerHTML = `
       <div class="page create-page">
         <div class="page-header">
           <button class="back-btn" id="back-btn">←</button>
-          <h2>New Game Template</h2>
+          <h2>${isEdit ? 'Edit Template' : 'New Game Template'}</h2>
         </div>
 
         <div class="container">
@@ -73,7 +95,7 @@ export function mountCreate(container) {
           <div id="submit-error" style="display:none;" class="form-error" style="margin-bottom:12px;"></div>
 
           <button class="btn btn--primary btn--full btn--lg" id="submit-btn">
-            Save template →
+            ${isEdit ? 'Save changes →' : 'Save template →'}
           </button>
 
           <div style="height:40px;"></div>
@@ -94,7 +116,7 @@ export function mountCreate(container) {
     cfgInterEl.addEventListener('input', () => { cfgInter = parseInt(cfgInterEl.value) || INTER_STAGE_SECONDS; });
     cfgBonusEl.addEventListener('input', () => { cfgBonus = parseInt(cfgBonusEl.value) || BONUS_MAX; });
 
-    container.querySelector('#back-btn').addEventListener('click', () => navigate('/'));
+    container.querySelector('#back-btn').addEventListener('click', () => navigate(isEdit ? `/t/${initialData.id}` : '/'));
 
     container.querySelectorAll('.pair-row').forEach((row, i) => {
       row.querySelector('.pair-word').addEventListener('input', e => { pairs[i].word = e.target.value; updateWarn(); });
@@ -165,7 +187,7 @@ export function mountCreate(container) {
     submitBtn.textContent = 'Saving…';
 
     try {
-      const docRef = await addDoc(collection(db, 'templates'), {
+      const payload = {
         title: titleVal,
         numRounds: numRoundsVal,
         pairsPool: validPairs,
@@ -174,15 +196,32 @@ export function mountCreate(container) {
           interStageSeconds: cfgInter,
           bonusMax: cfgBonus,
         },
-        forkedFrom: null,
-        createdAt: serverTimestamp(),
-      });
-      navigate(`/t/${docRef.id}`);
+      };
+
+      let templateId;
+      if (isEdit) {
+        const { setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+        await setDoc(doc(db, 'templates', initialData.id), {
+          ...payload,
+          forkedFrom: initialData.forkedFrom ?? null,
+          createdAt: initialData.createdAt,
+          updatedAt: serverTimestamp(),
+        });
+        templateId = initialData.id;
+      } else {
+        const docRef = await addDoc(collection(db, 'templates'), {
+          ...payload,
+          forkedFrom: null,
+          createdAt: serverTimestamp(),
+        });
+        templateId = docRef.id;
+      }
+      navigate(`/t/${templateId}`);
     } catch (err) {
       console.error(err);
       showError('Failed to save. Please check your connection.');
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Save template →';
+      submitBtn.textContent = isEdit ? 'Save changes →' : 'Save template →';
     }
 
     function showError(msg) {
@@ -192,11 +231,11 @@ export function mountCreate(container) {
   }
 
   // Mutable state persisted across re-renders
-  let titleVal = '';
-  let numRoundsVal = 1;
-  let cfgSeconds = MINIGAME_SECONDS;
-  let cfgInter = INTER_STAGE_SECONDS;
-  let cfgBonus = BONUS_MAX;
+  let titleVal      = initialData?.title        ?? '';
+  let numRoundsVal  = initialData?.numRounds    ?? 1;
+  let cfgSeconds    = initialData?.config?.minigameSeconds  ?? MINIGAME_SECONDS;
+  let cfgInter      = initialData?.config?.interStageSeconds ?? INTER_STAGE_SECONDS;
+  let cfgBonus      = initialData?.config?.bonusMax         ?? BONUS_MAX;
   let titleEl, numRoundsEl, cfgSecondsEl, cfgInterEl, cfgBonusEl;
 
   render();

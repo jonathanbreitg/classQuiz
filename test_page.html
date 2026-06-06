@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { createMatchingGame } from '/src/components/matchingGame.js';
+    const fakePairs = [
+      { word: 'ephemeral', definition: 'lasting for only a short time' },
+      { word: 'ubiquitous', definition: 'present or found everywhere' },
+      { word: 'tenacious', definition: 'holding firm to a purpose' },
+      { word: 'gregarious', definition: 'fond of company and sociable' },
+      { word: 'laconic', definition: 'using very few words' },
+      { word: 'pragmatic', definition: 'dealing with things sensibly' },
+    ];
+    const app = document.getElementById('app');
+    app.innerHTML = `
+      <div class="page play-page">
+        <div class="game-wrap">
+          <div class="game-timer-row">
+            <div class="timer-bar-wrap" style="flex:1;">
+              <div class="timer-bar" id="game-bar" style="width:60%;background:hsl(78 78% 56%)"></div>
+            </div>
+            <div class="game-timer-num" id="game-timer" style="color:hsl(78 78% 56%)">18.5</div>
+          </div>
+          <div id="game-area" style="flex:1;display:flex;flex-direction:column;min-height:0;"></div>
+        </div>
+      </div>
+    `;
+    const gi = createMatchingGame({ pairs: fakePairs, onSubmit: () => {} });
+    document.getElementById('game-area').appendChild(gi.el);
+    window.gi = gi;
+    window.pageReady = true;
+  </script>
+</body>
+</html>

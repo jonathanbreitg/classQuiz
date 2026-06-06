@@ -1,8 +1,11 @@
 import { navigate } from '../router.js';
-import { rtdb, serverNow } from '../firebase.js';
+import { rtdb, db, serverNow } from '../firebase.js';
 import {
-  ref, onValue, update, get, set, serverTimestamp, onDisconnect,
+  ref, onValue, update, get, set, serverTimestamp, onDisconnect, increment,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import {
+  doc, getDoc,
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { createMatchingGame } from '../components/matchingGame.js';
 import { createPodium } from '../components/podium.js';
 import { dedupeNickname, validateNickname } from '../lib/nicknames.js';
@@ -17,26 +20,85 @@ export function mountPlay(container, code) {
   let playerId = localStorage.getItem(`playerId_${code}`) || null;
   let nickname = localStorage.getItem(`nickname_${code}`) || null;
 
-  let match        = null;
-  let currentView  = null;
-  let gameInstance = null;
-  let tickInterval  = null;
-  let cdOverlay     = null;
-  const submitted   = {};  // roundIdx → true once submitted
+  let match          = null;
+  let currentView    = null;
+  let gameInstance   = null;
+  let tickInterval   = null;
+  let cdOverlay      = null;
+  const submitted    = {};
+
+  // FIX 1: pairsPool fetched from Firestore once, not embedded in RTDB
+  let pairsPool      = null;
+  let templateFetching = false;
+
+  // FIX 4: own player data from matchPlayers/{code}/{pid}
+  let myPlayerData   = null;
+  let unsubMyPlayer  = null;
+
+  // Final standings (subscribed lazily when reaching podium)
+  let finalPlayers   = null;
+  let unsubFinal     = null;
+
+  // Presence listener on .info/connected (FIX 3)
+  let unsubConnected = null;
 
   showLoading(container);
 
-  const unsubscribe = onValue(matchRef, snap => {
+  const unsubMatch = onValue(matchRef, snap => {
     if (!snap.exists()) return showErrPage(container, '🔍', 'Game not found', 'This code doesn\'t match any active game.');
     match = snap.val();
+    ensureTemplate();
     dispatch();
   });
+
+  // ── Template fetch (FIX 1) ────────────────────────────────
+
+  async function ensureTemplate() {
+    if (pairsPool || templateFetching || !match?.templateId) return;
+    templateFetching = true;
+    try {
+      const snap = await getDoc(doc(db, 'templates', match.templateId));
+      if (snap.exists()) pairsPool = snap.data().pairsPool;
+    } catch (e) { console.error('Template fetch failed:', e); }
+    templateFetching = false;
+    dispatch();
+  }
+
+  // ── Own player subscription (FIX 4) ──────────────────────
+
+  function subscribeToMyPlayer() {
+    if (unsubMyPlayer || !playerId) return;
+    unsubMyPlayer = onValue(ref(rtdb, `matchPlayers/${code}/${playerId}`), snap => {
+      myPlayerData = snap.val();
+      // Update score display if we're waiting on force-submit data
+      if (currentView?.startsWith('results-')) {
+        const roundIdx = Number(currentView.split('-')[1]);
+        const r = myPlayerData?.rounds?.[roundIdx];
+        if (r && submitted[roundIdx]) showRoundResult(r.correctPairs, 0, r.score, false);
+      }
+    });
+  }
+
+  // ── Presence (FIX 3) ────────────────────────────────────
+
+  function setupPresence() {
+    if (unsubConnected || !playerId) return;
+    const playerRef = ref(rtdb, `matchPlayers/${code}/${playerId}`);
+    unsubConnected = onValue(ref(rtdb, '.info/connected'), snap => {
+      if (!snap.val()) return;
+      // Re-register onDisconnect and mark connected on every (re)connect
+      onDisconnect(ref(rtdb, `matchPlayers/${code}/${playerId}/connected`)).set(false);
+      update(playerRef, { connected: true });
+    });
+  }
+
+  // ── Dispatch ──────────────────────────────────────────────
 
   function dispatch() {
     if (!match) return;
     const state = match.state;
 
-    if (state === 'finished' || state === 'podium') {
+    if (state === 'finished') {
       if (currentView !== 'final') { currentView = 'final'; renderFinal(); }
       return;
     }
@@ -47,20 +109,21 @@ export function mountPlay(container, code) {
       return;
     }
 
+    // Subscribe to own player data as soon as we have a playerId
+    if (playerId && !unsubMyPlayer) subscribeToMyPlayer();
+
     if (state === 'lobby') {
       if (currentView !== 'lobby') {
         currentView = 'lobby';
         renderLobby();
       } else {
-        // Realtime update: refresh player count in place
-        const countEl = container.querySelector('#lobby-count');
-        if (countEl) {
-          const n = Object.keys(match.players || {}).length;
-          countEl.textContent = `${n} player${n !== 1 ? 's' : ''} joined`;
-        }
+        updateLobbyCount();
       }
       return;
     }
+
+    // Playing and results states require pairsPool
+    if (!pairsPool) { ensureTemplate(); return; }
 
     const roundIdx = match.currentRound;
 
@@ -82,14 +145,13 @@ export function mountPlay(container, code) {
       if (currentView !== key) {
         currentView = key;
         clearTick();
-        // If player is still on the game board, reveal and show score — then just wait for host
         if (!submitted[roundIdx] && gameInstance) {
           submitted[roundIdx] = true;
           gameInstance.reveal();
-          const r = match.players?.[playerId]?.rounds?.[roundIdx];
+          // Show whatever score we have; myPlayerData listener will update if force-submit arrives later
+          const r = myPlayerData?.rounds?.[roundIdx];
           showRoundResult(r?.correctPairs ?? 0, 0, r?.score ?? 0, false);
         }
-        // No navigation — stay on game board until host advances to next round
       }
       return;
     }
@@ -99,7 +161,7 @@ export function mountPlay(container, code) {
 
   function renderJoinForm() {
     if (match.state !== 'lobby') return showErrPage(container, '🚫', 'Game already started', 'You can only join during the lobby.');
-    if (Object.keys(match.players || {}).length >= match.maxPlayers) {
+    if ((match.playerCount ?? 0) >= match.maxPlayers) {
       return showErrPage(container, '😅', 'Game full', `This game has reached its player limit (${match.maxPlayers}).`);
     }
 
@@ -138,7 +200,8 @@ export function mountPlay(container, code) {
       }
       joinBtn.disabled = true;
       try {
-        const pSnap = await get(ref(rtdb, `matches/${code}/players`));
+        // FIX 4: read existing players from matchPlayers/{code}
+        const pSnap = await get(ref(rtdb, `matchPlayers/${code}`));
         const sSnap = await get(ref(rtdb, `matches/${code}/state`));
         const existing = pSnap.val() || {};
 
@@ -153,12 +216,17 @@ export function mountPlay(container, code) {
         nickname = finalNick;
         localStorage.setItem(`nickname_${code}`, finalNick);
 
-        const playerRef = ref(rtdb, `matches/${code}/players/${playerId}`);
+        // FIX 4: write player record to matchPlayers/{code}/{pid}
+        const playerRef = ref(rtdb, `matchPlayers/${code}/${playerId}`);
         await set(playerRef, {
           nickname: finalNick, joinedAt: serverTimestamp(),
           connected: true, totalScore: 0, rounds: {},
         });
-        onDisconnect(ref(rtdb, `matches/${code}/players/${playerId}/connected`)).set(false);
+        // Increment total player count atomically (FIX 2)
+        await update(matchRef, { playerCount: increment(1) });
+
+        subscribeToMyPlayer();
+        setupPresence();
 
         currentView = 'lobby';
         renderLobby();
@@ -174,7 +242,6 @@ export function mountPlay(container, code) {
   // ── Lobby ────────────────────────────────────────────────
 
   function renderLobby() {
-    const n = Object.keys(match.players || {}).length;
     container.innerHTML = `
       <div class="page play-page">
         <div class="play-waiting">
@@ -184,10 +251,18 @@ export function mountPlay(container, code) {
           <div class="divider" style="width:60px;"></div>
           <div class="spinner"></div>
           <p class="text-muted">Waiting for the host to start…</p>
-          <div class="badge badge--primary" id="lobby-count">${n} player${n !== 1 ? 's' : ''} joined</div>
+          <div class="badge badge--primary" id="lobby-count">— players joined</div>
         </div>
       </div>
     `;
+    updateLobbyCount();
+  }
+
+  function updateLobbyCount() {
+    const el = container.querySelector('#lobby-count');
+    if (!el) return;
+    const n = match.playerCount ?? 0;
+    el.textContent = `${n} player${n !== 1 ? 's' : ''} joined`;
   }
 
   // ── Playing ──────────────────────────────────────────────
@@ -196,10 +271,10 @@ export function mountPlay(container, code) {
     const roundIdx = match.currentRound;
     if (submitted[roundIdx]) return renderWaiting();
 
-    const round    = match.rounds[roundIdx];
-    const cfg      = match.template.config;
-    const pool     = match.template.pairsPool;
-    const pairs    = round.pairIndices.map(i => pool[i]);
+    const round = match.rounds[roundIdx];
+    const cfg   = match.template.config;
+    // FIX 1: pairsPool comes from Firestore, not RTDB
+    const pairs = round.pairIndices.map(i => pairsPool[i]);
 
     container.innerHTML = `
       <div class="page play-page">
@@ -238,7 +313,6 @@ export function mountPlay(container, code) {
   }
 
   function tickRound() {
-    // Don't restart the tick (and cancel revealTimer) after player has submitted
     if (submitted[match.currentRound]) return;
     if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
     hideCd();
@@ -246,17 +320,17 @@ export function mountPlay(container, code) {
     const round    = match.rounds?.[roundIdx];
     if (!round?.startAt) return;
 
-    const cfg        = match.template.config;
-    const totalMs    = cfg.minigameSeconds * 1000;
-    const cntdownMs  = READY_COUNTDOWN_SECONDS * 1000;
+    const cfg       = match.template.config;
+    const totalMs   = cfg.minigameSeconds * 1000;
+    const cntdownMs = READY_COUNTDOWN_SECONDS * 1000;
 
     tickInterval = setInterval(() => {
       if (!currentView?.startsWith('playing')) { clearTick(); return; }
 
-      const now      = serverNow();
-      const elapsed  = now - round.startAt;
-      const timerEl  = container.querySelector('#game-timer');
-      const barEl    = container.querySelector('#game-bar');
+      const now     = serverNow();
+      const elapsed = now - round.startAt;
+      const timerEl = container.querySelector('#game-timer');
+      const barEl   = container.querySelector('#game-bar');
       if (!timerEl) { clearTick(); return; }
 
       if (elapsed < cntdownMs) {
@@ -308,10 +382,10 @@ export function mountPlay(container, code) {
     submitted[roundIdx] = true;
     clearTick(); hideCd();
 
-    const now          = serverNow();
-    const gameStart    = round.startAt + READY_COUNTDOWN_SECONDS * 1000;
-    const elapsed      = now - gameStart;
-    const remainingMs  = Math.max(0, cfg.minigameSeconds * 1000 - elapsed);
+    const now         = serverNow();
+    const gameStart   = round.startAt + READY_COUNTDOWN_SECONDS * 1000;
+    const elapsed     = now - gameStart;
+    const remainingMs = Math.max(0, cfg.minigameSeconds * 1000 - elapsed);
 
     const correctPairs = gradeRound(connections);
     const timeBonus    = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
@@ -321,12 +395,12 @@ export function mountPlay(container, code) {
     showRoundResult(correctPairs, timeBonus, roundScore, finished);
 
     try {
-      const player       = match.players?.[playerId] || {};
-      const existing     = player.rounds || {};
-      const allRounds    = { ...existing, [roundIdx]: {finished, correctPairs, timeLeftMs: remainingMs, score: roundScore} };
-      const totalScore   = computeTotalScore(Object.values(allRounds));
+      const existing   = myPlayerData?.rounds || {};
+      const allRounds  = { ...existing, [roundIdx]: { finished, correctPairs, timeLeftMs: remainingMs, score: roundScore } };
+      const totalScore = computeTotalScore(Object.values(allRounds));
 
-      await update(ref(rtdb, `matches/${code}/players/${playerId}`), {
+      // FIX 4: write to matchPlayers/{code}/{pid} — does NOT trigger match onValue listener
+      await update(ref(rtdb, `matchPlayers/${code}/${playerId}`), {
         [`rounds/${roundIdx}`]: {
           finished, correctPairs, timeLeftMs: remainingMs, score: roundScore,
           submittedAt: serverTimestamp(),
@@ -336,7 +410,6 @@ export function mountPlay(container, code) {
     } catch (err) { console.error('Save failed:', err); }
   }
 
-  // Replaces the timer row with score summary — board stays fully visible
   function showRoundResult(correctPairs, timeBonus, roundScore, finished) {
     const timerRow = container.querySelector('.game-timer-row');
     if (!timerRow) return;
@@ -353,13 +426,23 @@ export function mountPlay(container, code) {
   // ── Final / Podium ───────────────────────────────────────
 
   function renderFinal() {
-    document.querySelectorAll('.round-result-overlay').forEach(e => e.remove());
     clearTick();
 
-    const players  = Object.values(match.players || {});
-    const ranked   = rankPlayers(players);
-    const myData   = match.players?.[playerId];
-    const myRanked = ranked.find(p => p.nickname === myData?.nickname);
+    if (!finalPlayers) {
+      // Subscribe to all players lazily — only needed once at game end
+      if (!unsubFinal) {
+        unsubFinal = onValue(ref(rtdb, `matchPlayers/${code}`), snap => {
+          finalPlayers = Object.values(snap.val() || {});
+          if (currentView === 'final') renderFinal();
+        });
+      }
+      container.innerHTML = `<div class="loading-page"><div class="spinner"></div><span>Loading standings…</span></div>`;
+      return;
+    }
+
+    const ranked   = rankPlayers(finalPlayers);
+    const myData   = finalPlayers.find(p => p.nickname === nickname);
+    const myRanked = ranked.find(p => p.nickname === nickname);
 
     container.innerHTML = `
       <div class="page play-page" style="background:radial-gradient(ellipse 80% 50% at 50% 0%,rgba(123,104,255,.1) 0%,transparent 60%);">
@@ -377,7 +460,7 @@ export function mountPlay(container, code) {
     `;
 
     container.querySelector('#home').addEventListener('click', () => navigate('/'));
-    container.querySelector('#pod-area').appendChild(createPodium(players));
+    container.querySelector('#pod-area').appendChild(createPodium(finalPlayers));
   }
 
   // ── Helpers ──────────────────────────────────────────────
@@ -388,7 +471,10 @@ export function mountPlay(container, code) {
   }
 
   return () => {
-    unsubscribe();
+    unsubMatch();
+    if (unsubMyPlayer)   unsubMyPlayer();
+    if (unsubFinal)      unsubFinal();
+    if (unsubConnected)  unsubConnected();
     clearTick();
     document.querySelectorAll('.countdown-overlay').forEach(e => e.remove());
     if (gameInstance) gameInstance.cleanup();

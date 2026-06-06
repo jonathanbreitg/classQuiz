@@ -6,11 +6,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { createLeaderboard } from '../components/leaderboard.js';
 import { createPodium } from '../components/podium.js';
-import { computeRoundScore, computeTotalScore } from '../lib/scoring.js';
-import { gradeRound } from '../lib/grading.js';
 import { READY_COUNTDOWN_SECONDS, INTER_STAGE_SECONDS } from '../lib/constants.js';
 
-// Inject qrcodejs as a plain script (not an ES module) on first call
 let qrReady = false;
 function loadQR() {
   if (qrReady || window.QRCode) { qrReady = true; return Promise.resolve(); }
@@ -24,20 +21,28 @@ function loadQR() {
 }
 
 export function mountHost(container, code) {
-  const storedToken = localStorage.getItem(`hostToken_${code}`);
-  const matchRef    = ref(rtdb, `matches/${code}`);
+  const storedToken      = localStorage.getItem(`hostToken_${code}`);
+  const matchRef         = ref(rtdb, `matches/${code}`);
+  const matchPlayersRef  = ref(rtdb, `matchPlayers/${code}`);
 
   let match        = null;
-  let currentView  = null; // includes round index for 'playing'
+  let allPlayers   = {};   // FIX 4: players live in matchPlayers/{code}, not in match
+  let currentView  = null;
   let roundTick    = null;
   let autoAdvance  = null;
-  let countdownEl  = null; // overlay DOM node
+  let countdownEl  = null;
 
   showLoading(container);
 
-  const unsubscribe = onValue(matchRef, snap => {
+  // FIX 4: two lightweight listeners instead of one fat one
+  const unsubMatch = onValue(matchRef, snap => {
     if (!snap.exists()) return showErr(container, 'Match not found.');
     match = snap.val();
+    render();
+  });
+
+  const unsubPlayers = onValue(matchPlayersRef, snap => {
+    allPlayers = snap.val() || {};
     render();
   });
 
@@ -52,12 +57,31 @@ export function mountHost(container, code) {
     const isHost = match.hostToken === storedToken;
     const key    = viewKey();
 
-    // Lobby always refreshes (player list); other views refresh only on state/round change
-    if (key === currentView && match.state !== 'lobby') {
-      // Special case: playing but tick not running yet (startAt just appeared)
+    // FIX 3: lobby handled inline — no separate onValue sub-listener
+    if (match.state === 'lobby') {
+      if (currentView !== 'lobby') {
+        clearTimers();
+        currentView = 'lobby';
+        renderLobby(isHost);
+      } else {
+        updateLobbyPlayers(allPlayers);
+      }
+      return;
+    }
+
+    if (key === currentView) {
       if (match.state === 'playing') {
         const round = match.rounds?.[match.currentRound];
         if (round?.startAt && !roundTick) tickPlaying(round, match.template.config, isHost);
+      } else if (match.state === 'results') {
+        // Refresh leaderboard live — catches late submissions from players with slow connections
+        const lbWrap = container.querySelector('#lb-wrap');
+        if (lbWrap) {
+          lbWrap.innerHTML = '';
+          lbWrap.appendChild(
+            createLeaderboard(Object.values(allPlayers), { currentRound: match.currentRound, gridMode: true })
+          );
+        }
       }
       return;
     }
@@ -65,10 +89,9 @@ export function mountHost(container, code) {
     clearTimers();
     currentView = key;
 
-    if (match.state === 'lobby')   return renderLobby(isHost);
     if (match.state === 'playing') return renderPlaying(isHost);
     if (match.state === 'results') return renderResults(isHost);
-    if (match.state === 'podium' || match.state === 'finished') return renderPodium();
+    if (match.state === 'finished') return renderPodium();
   }
 
   // ── Lobby ────────────────────────────────────────────────
@@ -109,7 +132,6 @@ export function mountHost(container, code) {
       </div>
     `;
 
-    // QR code
     loadQR().then(() => {
       const wrap = container.querySelector('#qr-wrap');
       if (!wrap || !window.QRCode) return;
@@ -122,14 +144,11 @@ export function mountHost(container, code) {
     }).catch(() => {});
 
     if (isHost) {
-      const startBtn = container.querySelector('#start-btn');
-      startBtn.addEventListener('click', hostStartGame);
+      container.querySelector('#start-btn').addEventListener('click', hostStartGame);
     }
 
-    // Subscribe to players for live updates
-    const playersRef      = ref(rtdb, `matches/${code}/players`);
-    const unsubPlayers    = onValue(playersRef, snap => updateLobbyPlayers(snap.val() || {}));
-    container._cleanup    = unsubPlayers;
+    // FIX 3: no sub-listener — allPlayers is already updated by matchPlayersRef listener above
+    updateLobbyPlayers(allPlayers);
   }
 
   function updateLobbyPlayers(players) {
@@ -205,29 +224,28 @@ export function mountHost(container, code) {
 
   function tickPlaying(round, cfg, isHost) {
     if (roundTick) return;
-    const totalMs     = cfg.minigameSeconds * 1000;
-    const cntdownMs   = READY_COUNTDOWN_SECONDS * 1000;
+    const totalMs    = cfg.minigameSeconds * 1000;
+    const cntdownMs  = READY_COUNTDOWN_SECONDS * 1000;
 
     roundTick = setInterval(() => {
-      const now      = serverNow();
-      const elapsed  = now - round.startAt;
-      const timerEl  = container.querySelector('#timer-display');
-      const barEl    = container.querySelector('#timer-bar');
-      const finEl    = container.querySelector('#fin-count');
-      const connEl   = container.querySelector('#conn-count');
+      const now     = serverNow();
+      const elapsed = now - round.startAt;
+      const timerEl = container.querySelector('#timer-display');
+      const barEl   = container.querySelector('#timer-bar');
+      const finEl   = container.querySelector('#fin-count');
+      const connEl  = container.querySelector('#conn-count');
       if (!timerEl) { clearInterval(roundTick); roundTick = null; return; }
 
-      if (match.players) {
-        const all       = Object.values(match.players);
-        const connected = all.filter(p => p.connected);
-        const finished  = all.filter(p => p.rounds?.[match.currentRound] !== undefined);
-        if (connEl) connEl.textContent = connected.length;
-        if (finEl)  finEl.textContent  = finished.length;
-        if (isHost && connected.length > 0 && finished.length >= connected.length) {
-          clearInterval(roundTick); roundTick = null;
-          setTimeout(() => hostEndRound(), 400);
-          return;
-        }
+      // FIX 4: use allPlayers (separate from match node)
+      const all       = Object.values(allPlayers);
+      const connected = all.filter(p => p.connected);
+      const finished  = all.filter(p => p.rounds?.[match.currentRound] !== undefined);
+      if (connEl) connEl.textContent = connected.length;
+      if (finEl)  finEl.textContent  = finished.length;
+      if (isHost && connected.length > 0 && finished.length >= connected.length) {
+        clearInterval(roundTick); roundTick = null;
+        setTimeout(() => hostEndRound(), 400);
+        return;
       }
 
       if (elapsed < cntdownMs) {
@@ -280,40 +298,20 @@ export function mountHost(container, code) {
 
   async function hostEndRound() {
     clearTimers();
-    const roundIdx = match.currentRound;
-    const players  = match.players || {};
-    const updates  = {};
-
-    // Force-submit any connected players who haven't submitted
-    for (const [pid, player] of Object.entries(players)) {
-      if (!player.connected || player.rounds?.[roundIdx]) continue;
-      const score = computeRoundScore(gradeRound({}), 0);
-      updates[`players/${pid}/rounds/${roundIdx}`] = {
-        finished: false, correctPairs: 0, timeLeftMs: 0, score,
-        submittedAt: serverTimestamp(),
-      };
-    }
-
-    // Recompute totals
-    for (const [pid, player] of Object.entries(players)) {
-      const allRounds = [];
-      for (let i = 0; i <= roundIdx; i++) {
-        const r = updates[`players/${pid}/rounds/${i}`] || player.rounds?.[i];
-        if (r) allRounds.push(r);
-      }
-      updates[`players/${pid}/totalScore`] = computeTotalScore(allRounds);
-    }
-
-    updates['state']         = 'results';
-    updates['lastActiveAt']  = serverTimestamp();
-    await update(matchRef, updates);
+    // Players write their own round results; late submissions are handled by the
+    // leaderboard live-refresh in render(). Just flip the state here.
+    await update(ref(rtdb, '/'), {
+      [`matches/${code}/state`]:        'results',
+      [`matches/${code}/lastActiveAt`]: serverTimestamp(),
+    });
   }
 
   // ── Results ──────────────────────────────────────────────
 
   function renderResults(isHost) {
     const cfg     = match.template.config;
-    const players = Object.values(match.players || {});
+    // FIX 4: players come from allPlayers, not match
+    const players = Object.values(allPlayers);
 
     container.innerHTML = `
       <div class="page host-page">
@@ -360,13 +358,13 @@ export function mountHost(container, code) {
   async function hostAdvance() {
     clearTimers();
     const next = match.currentRound + 1;
-    const updates = {lastActiveAt: serverTimestamp()};
+    const updates = { lastActiveAt: serverTimestamp() };
     if (next < match.template.numRounds) {
-      updates['state']                    = 'playing';
-      updates['currentRound']             = next;
-      updates[`rounds/${next}/startAt`]   = serverTimestamp();
+      updates['state']                  = 'playing';
+      updates['currentRound']           = next;
+      updates[`rounds/${next}/startAt`] = serverTimestamp();
     } else {
-      updates['state'] = 'podium';
+      updates['state'] = 'finished';
     }
     await update(matchRef, updates);
   }
@@ -374,7 +372,8 @@ export function mountHost(container, code) {
   // ── Podium ───────────────────────────────────────────────
 
   function renderPodium() {
-    const players = Object.values(match.players || {});
+    // FIX 4: players come from allPlayers
+    const players = Object.values(allPlayers);
     container.innerHTML = `
       <div class="page host-page host-podium">
         <div class="podium-title">${icon('trophy')} Final Standings</div>
@@ -382,9 +381,6 @@ export function mountHost(container, code) {
       </div>
     `;
     container.querySelector('#pod-wrap').appendChild(createPodium(players));
-    if (match.state === 'podium') {
-      update(matchRef, {state: 'finished', lastActiveAt: serverTimestamp()});
-    }
   }
 
   // ── Cleanup ──────────────────────────────────────────────
@@ -393,11 +389,11 @@ export function mountHost(container, code) {
     if (roundTick)   { clearInterval(roundTick);   roundTick  = null; }
     if (autoAdvance) { clearInterval(autoAdvance); autoAdvance = null; }
     hideCountdown();
-    if (container._cleanup) { container._cleanup(); container._cleanup = null; }
   }
 
   return () => {
-    unsubscribe();
+    unsubMatch();
+    unsubPlayers();
     clearTimers();
   };
 }

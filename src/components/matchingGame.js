@@ -144,6 +144,7 @@ export function createMatchingGame({ pairs, onSubmit }) {
   // ── DOM ─────────────────────────────────────────────────
   const el = document.createElement('div');
   el.className = 'game-board';
+  el.style.fontSize = '2rem'; // fitFontSize will reduce this to the maximum that fits
   el.innerHTML = `
     <div class="game-column" id="words-col"></div>
     <svg class="connections-svg" id="conn-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:1;"></svg>
@@ -426,8 +427,31 @@ export function createMatchingGame({ pairs, onSubmit }) {
     });
   });
 
+  // ── Font sizing ──────────────────────────────────────────
+  function fitFontSize() {
+    const boxes = [...el.querySelectorAll('.match-box')];
+    if (!boxes.length) return;
+    if (!boxes[0].clientHeight) { requestAnimationFrame(fitFontSize); return; }
+
+    // overflow:hidden is required for scrollHeight to correctly reflect content
+    // height on flex items (with overflow:visible the browser may not report overflow)
+    boxes.forEach(b => { b.style.overflow = 'hidden'; });
+
+    const MAX_REM = 2.00;
+    const MIN_REM = 0.75;
+    const STEP    = 0.05;
+    let size = MAX_REM;
+    while (size > MIN_REM) {
+      el.style.fontSize = `${size.toFixed(2)}rem`;
+      if (boxes.every(b => b.scrollHeight <= b.clientHeight + 2)) break;
+      size -= STEP;
+    }
+
+    boxes.forEach(b => { b.style.overflow = ''; });
+  }
+
   // Reflow lines on resize
-  const ro = new ResizeObserver(startLoop);
+  const ro = new ResizeObserver(() => { startLoop(); fitFontSize(); });
   ro.observe(el);
 
   // ── Submit & reveal ──────────────────────────────────────
