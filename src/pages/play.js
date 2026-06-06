@@ -234,7 +234,10 @@ export function mountPlay(container, code) {
   }
 
   function tickRound() {
-    clearTick();
+    // Don't restart the tick (and cancel revealTimer) after player has submitted
+    if (submitted[match.currentRound]) return;
+    if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    hideCd();
     const roundIdx = match.currentRound;
     const round    = match.rounds?.[roundIdx];
     if (!round?.startAt) return;
