@@ -2,7 +2,7 @@ import { buildPodium } from '../lib/ranking.js';
 import { PODIUM_REVEAL_SECONDS } from '../lib/constants.js';
 import { icon } from '../lib/icons.js';
 
-const MAX_HEIGHT_PCT = 72; // 1st place step height as % of column
+const MAX_HEIGHT_VH = 55; // 1st place step height in vh units — independent of parent chain
 
 export function createPodium(players) {
   const podiumPlayers = buildPodium(players);
@@ -53,7 +53,7 @@ export function createPodium(players) {
 
     // Height proportional to score — 1st place is always MAX_HEIGHT_PCT
     const rankScore = byRank[rank][0].totalScore;
-    step.style.height = `${((rankScore / maxScore) * MAX_HEIGHT_PCT).toFixed(1)}%`;
+    step.style.height = `${((rankScore / maxScore) * MAX_HEIGHT_VH).toFixed(1)}vh`;
 
     col.appendChild(playersEl);
     col.appendChild(step);

@@ -20,10 +20,9 @@ export function mountPlay(container, code) {
   let match        = null;
   let currentView  = null;
   let gameInstance = null;
-  let tickInterval = null;
-  let cdOverlay    = null;
-  let revealTimer  = null;
-  const submitted  = {};  // roundIdx → true once submitted
+  let tickInterval  = null;
+  let cdOverlay     = null;
+  const submitted   = {};  // roundIdx → true once submitted
 
   showLoading(container);
 
@@ -70,7 +69,6 @@ export function mountPlay(container, code) {
       if (currentView !== key) {
         currentView = key;
         clearTick();
-        document.querySelectorAll('.round-result-overlay').forEach(e => e.remove());
         if (gameInstance) { gameInstance.cleanup(); gameInstance = null; }
         renderPlaying();
       } else {
@@ -84,8 +82,14 @@ export function mountPlay(container, code) {
       if (currentView !== key) {
         currentView = key;
         clearTick();
-        document.querySelectorAll('.round-result-overlay').forEach(e => e.remove());
-        renderResults();
+        // If player is still on the game board, reveal and show score — then just wait for host
+        if (!submitted[roundIdx] && gameInstance) {
+          submitted[roundIdx] = true;
+          gameInstance.reveal();
+          const r = match.players?.[playerId]?.rounds?.[roundIdx];
+          showRoundResult(r?.correctPairs ?? 0, 0, r?.score ?? 0, false);
+        }
+        // No navigation — stay on game board until host advances to next round
       }
       return;
     }
@@ -314,11 +318,7 @@ export function mountPlay(container, code) {
     const roundScore   = computeRoundScore(correctPairs, timeBonus);
 
     if (gameInstance) gameInstance.reveal();
-    // Show green/red reveal for 2 seconds before the score overlay
-    revealTimer = setTimeout(() => {
-      revealTimer = null;
-      showRoundResult(correctPairs, timeBonus, roundScore, finished);
-    }, 4000);
+    showRoundResult(correctPairs, timeBonus, roundScore, finished);
 
     try {
       const player       = match.players?.[playerId] || {};
@@ -336,58 +336,16 @@ export function mountPlay(container, code) {
     } catch (err) { console.error('Save failed:', err); }
   }
 
+  // Replaces the timer row with score summary — board stays fully visible
   function showRoundResult(correctPairs, timeBonus, roundScore, finished) {
-    const el = document.createElement('div');
-    el.className = 'round-result-overlay';
-    el.innerHTML = `
-      <div class="round-result-pill">${correctPairs}/6 correct</div>
-      <div class="round-result-stats">
-        <div class="round-result-stat">
-          <div class="round-result-stat__val">${correctPairs}</div>
-          <div class="round-result-stat__label">Pairs</div>
-        </div>
-        <div class="round-result-stat">
-          <div class="round-result-stat__val" style="color:${finished ? 'var(--primary)' : 'var(--text-3)'}">+${timeBonus}</div>
-          <div class="round-result-stat__label">Time bonus</div>
-        </div>
-        <div class="round-result-stat">
-          <div class="round-result-stat__val round-result-stat__val--score">${roundScore}</div>
-          <div class="round-result-stat__label">Points</div>
-        </div>
-      </div>
-      <div class="round-result-waiting">Waiting for others…</div>
-    `;
-    document.body.appendChild(el);
-  }
-
-  // ── Results ──────────────────────────────────────────────
-
-  function renderResults() {
-    const roundIdx  = match.currentRound;
-    const myData    = match.players?.[playerId];
-    const res       = myData?.rounds?.[roundIdx];
-    const total     = myData?.totalScore ?? 0;
-    const players   = Object.values(match.players || {});
-    const ranked    = rankPlayers(players);
-    const myRank    = ranked.find(p => p.nickname === myData?.nickname);
-
-    container.innerHTML = `
-      <div class="page play-page">
-        <div class="play-result">
-          <div>
-            <div style="font-size:0.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:6px;">Round ${roundIdx + 1}</div>
-            <div class="result-score">${res?.score ?? 0}</div>
-            <div style="font-size:0.9rem;color:var(--text-2);margin-top:4px;">pts this round</div>
-          </div>
-          <div class="result-breakdown">
-            <div class="result-stat"><div class="result-stat__value">${res?.correctPairs ?? 0}/6</div><div class="result-stat__label">Correct</div></div>
-            <div class="result-stat"><div class="result-stat__value" style="color:var(--primary);">+${res ? res.score - res.correctPairs : 0}</div><div class="result-stat__label">Time bonus</div></div>
-            <div class="result-stat"><div class="result-stat__value">${total}</div><div class="result-stat__label">Total</div></div>
-          </div>
-          ${myRank ? `<div class="badge badge--primary" style="font-size:.95rem;padding:6px 16px;">Rank #${myRank.rank} of ${players.length}</div>` : ''}
-          <div class="spinner"></div>
-          <p class="text-muted">Waiting for next round…</p>
-        </div>
+    const timerRow = container.querySelector('.game-timer-row');
+    if (!timerRow) return;
+    timerRow.innerHTML = `
+      <div class="game-score-summary">
+        <span class="game-score-summary__pill">${correctPairs}/6 correct</span>
+        <span class="game-score-summary__stat">${finished ? `<span style="color:var(--primary)">+${timeBonus}</span> bonus` : 'no bonus'}</span>
+        <span class="game-score-summary__score">${roundScore} pts</span>
+        <span class="game-score-summary__waiting">Waiting…</span>
       </div>
     `;
   }
@@ -426,14 +384,13 @@ export function mountPlay(container, code) {
 
   function clearTick() {
     if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
-    if (revealTimer)  { clearTimeout(revealTimer);   revealTimer  = null; }
     hideCd();
   }
 
   return () => {
     unsubscribe();
     clearTick();
-    document.querySelectorAll('.round-result-overlay,.countdown-overlay').forEach(e => e.remove());
+    document.querySelectorAll('.countdown-overlay').forEach(e => e.remove());
     if (gameInstance) gameInstance.cleanup();
   };
 }

@@ -794,7 +794,6 @@ h3 { font-size: 1.2rem; font-weight: 700; }
   justify-content: flex-end;
   flex: 1;
   max-width: 186px;
-  height: 100%;
 }
 
 .podium-players {
@@ -902,61 +901,39 @@ h3 { font-size: 1.2rem; font-weight: 700; }
 }
 .play-nickname-form .card { width: 100%; max-width: 400px; }
 
-/* Slide-up score panel — shows above the green/red game board */
-.round-result-overlay {
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: var(--bg-2);
-  border-top: 1px solid var(--border-2);
-  border-radius: 20px 20px 0 0;
-  padding: 20px 24px 32px;
-  z-index: 50;
+/* Score summary row — replaces timer bar after submission, board stays fully visible */
+.game-score-summary {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  animation: slideUp 0.35s cubic-bezier(0.34,1.26,0.64,1);
-}
-@keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
-.round-result-pill {
-  font-size: 1.1rem;
-  font-weight: 900;
-  color: var(--text);
-}
-.round-result-stats {
-  display: flex;
-  gap: 28px;
   justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 4px;
+  animation: fadeIn 0.3s ease;
 }
-.round-result-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.round-result-stat__val {
-  font-size: 1.8rem;
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.game-score-summary__pill {
+  font-size: 1.6rem;
   font-weight: 900;
   color: var(--text);
 }
-.round-result-stat__val--score {
+.game-score-summary__stat {
+  font-size: 1.1rem;
+  color: var(--text-2);
+}
+.game-score-summary__score {
+  font-size: 2.4rem;
+  font-weight: 900;
   background: linear-gradient(135deg, var(--primary), #a78bfa);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  font-size: 2.2rem;
 }
-.round-result-stat__label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-3);
-}
-.round-result-waiting {
+.game-score-summary__waiting {
   font-size: 0.85rem;
-  font-weight: 600;
   color: var(--text-3);
+  margin-top: 2px;
 }
 
 .play-result {
