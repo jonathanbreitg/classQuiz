@@ -60,6 +60,22 @@ export function mountCreate(container, initialData = null) {
             seconds:   r.seconds   ?? MINIGAME_SECONDS,
           };
         }
+        if (r.type === 'shuffle') {
+          return {
+            type:     'shuffle',
+            imageUrl: r.imageUrl  ?? '',
+            sentence: r.sentence  ?? '',
+            seconds:  r.seconds   ?? MINIGAME_SECONDS,
+          };
+        }
+        if (r.type === 'choice') {
+          return {
+            type:     'choice',
+            question: r.question  ?? '',
+            answers:  (r.answers ?? []).map(a => ({ text: a.text ?? '', correct: !!a.correct })),
+            seconds:  r.seconds   ?? MINIGAME_SECONDS,
+          };
+        }
         // match (or legacy match)
         return {
           type: 'match',
@@ -84,6 +100,22 @@ export function mountCreate(container, initialData = null) {
   }
   function defaultTypeRound() {
     return { type: 'type', paragraph: '', seconds: MINIGAME_SECONDS };
+  }
+  function defaultShuffleRound() {
+    return { type: 'shuffle', imageUrl: '', sentence: '', seconds: MINIGAME_SECONDS };
+  }
+  function defaultChoiceRound() {
+    return {
+      type:     'choice',
+      question: '',
+      answers:  [
+        { text: '', correct: false },
+        { text: '', correct: false },
+        { text: '', correct: false },
+        { text: '', correct: false },
+      ],
+      seconds: MINIGAME_SECONDS,
+    };
   }
 
   // ── Main render ───────────────────────────────────────────────────────────
@@ -121,6 +153,8 @@ export function mountCreate(container, initialData = null) {
             <button class="btn btn--secondary add-round-btn" id="add-fill-btn">+ Fill-in-blank</button>
             <button class="btn btn--secondary add-round-btn" id="add-select-btn">+ Select word</button>
             <button class="btn btn--secondary add-round-btn" id="add-type-btn">+ Type answer</button>
+            <button class="btn btn--secondary add-round-btn" id="add-shuffle-btn">+ Word shuffle</button>
+            <button class="btn btn--secondary add-round-btn" id="add-choice-btn">+ Multiple choice</button>
           </div>
 
           <div class="divider"></div>
@@ -154,15 +188,17 @@ export function mountCreate(container, initialData = null) {
 
   // ── Per-round card HTML ───────────────────────────────────────────────────
 
-  const ROUND_TYPE_LABELS = { fill: 'Fill-in-blank', select: 'Select word', type: 'Type answer', match: 'Match' };
-  const ROUND_TYPE_BADGE  = { fill: 'info', select: 'info', type: 'info', match: 'primary' };
+  const ROUND_TYPE_LABELS = { fill: 'Fill-in-blank', select: 'Select word', type: 'Type answer', match: 'Match', shuffle: 'Word shuffle', choice: 'Multiple choice' };
+  const ROUND_TYPE_BADGE  = { fill: 'info', select: 'info', type: 'info', match: 'primary', shuffle: 'info', choice: 'info' };
 
   function renderRoundCard(round, i) {
     const typeLabel  = ROUND_TYPE_LABELS[round.type] ?? 'Match';
     const badgeColor = ROUND_TYPE_BADGE[round.type]  ?? 'primary';
-    const body = round.type === 'fill'   ? renderFillBody(round, i)
-               : round.type === 'select' ? renderSelectBody(round, i)
-               : round.type === 'type'   ? renderTypeBody(round, i)
+    const body = round.type === 'fill'    ? renderFillBody(round, i)
+               : round.type === 'select'  ? renderSelectBody(round, i)
+               : round.type === 'type'    ? renderTypeBody(round, i)
+               : round.type === 'shuffle' ? renderShuffleBody(round, i)
+               : round.type === 'choice'  ? renderChoiceBody(round, i)
                : renderMatchBody(round, i);
     return `
       <div class="round-card" data-round-idx="${i}">
@@ -313,6 +349,72 @@ export function mountCreate(container, initialData = null) {
     `;
   }
 
+  function renderShuffleBody(round, ri) {
+    const wordCount = round.sentence.trim() ? round.sentence.trim().split(/\s+/).length : 0;
+    const preview = wordCount > 0
+      ? `<span style="color:var(--success);">✓ ${wordCount} word${wordCount !== 1 ? 's' : ''}</span>`
+      : '';
+
+    return `
+      ${renderSecondsField(round, ri)}
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="shuffle-img-${ri}">Image URL</label>
+        <span class="form-hint" style="display:block;margin-bottom:6px;">Shown on the host screen while players rearrange the words.</span>
+        <input id="shuffle-img-${ri}" class="input" type="url"
+          placeholder="https://example.com/image.jpg"
+          data-shuffle-img="${ri}" value="${escHtml(round.imageUrl)}">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label" for="shuffle-sentence-${ri}">Sentence</label>
+        <span class="form-hint" style="display:block;margin-bottom:6px;">Words will be shuffled for the player to reorder.</span>
+        <input id="shuffle-sentence-${ri}" class="input" type="text"
+          placeholder="The cat sat on the mat"
+          maxlength="300"
+          data-shuffle-sentence="${ri}" value="${escHtml(round.sentence)}">
+        <div id="shuffle-preview-${ri}" class="form-hint" style="margin-top:4px;">${preview}</div>
+      </div>
+    `;
+  }
+
+  function renderChoiceBody(round, ri) {
+    const COLORS  = ['#ff5f5f', '#5ba4ff', '#ffd93d', '#51cf66'];
+    const LETTERS = ['A', 'B', 'C', 'D'];
+    const ansRows = round.answers.map((a, ai) => `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <span style="width:22px;height:22px;border-radius:50%;background:${COLORS[ai]};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:0.7rem;color:${ai >= 2 ? '#1a1a2e' : '#fff'};">${LETTERS[ai]}</span>
+        <input class="input" type="text" placeholder="Answer ${LETTERS[ai]}"
+          maxlength="200" value="${escHtml(a.text)}"
+          data-choice-answer="${ri}" data-answer-idx="${ai}"
+          style="flex:1;">
+        <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;cursor:pointer;flex-shrink:0;">
+          <input type="checkbox" data-choice-correct="${ri}" data-answer-idx="${ai}"
+            ${a.correct ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+          <span style="font-size:0.8rem;font-weight:700;color:var(--text-2);">Correct</span>
+        </label>
+      </div>`).join('');
+
+    const correctCount = round.answers.filter(a => a.correct).length;
+    const warn = round.answers.some(a => a.text.trim()) && correctCount === 0
+      ? `<div class="warn-banner" id="choice-warn-${ri}"><span>⚠️</span><span>Mark at least one answer as correct.</span></div>`
+      : `<div id="choice-warn-${ri}"></div>`;
+
+    return `
+      ${renderSecondsField(round, ri)}
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="choice-q-${ri}">Question</label>
+        <input id="choice-q-${ri}" class="input" type="text"
+          placeholder="What is the capital of France?"
+          maxlength="300" value="${escHtml(round.question)}"
+          data-choice-question="${ri}">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Answers (check all correct)</label>
+        ${warn}
+        <div id="choice-answers-${ri}">${ansRows}</div>
+      </div>
+    `;
+  }
+
   // ── Event listeners ───────────────────────────────────────────────────────
 
   function attachListeners() {
@@ -340,6 +442,8 @@ export function mountCreate(container, initialData = null) {
     container.querySelector('#add-fill-btn').addEventListener('click', () => addRoundAndScroll(defaultFillRound()));
     container.querySelector('#add-select-btn').addEventListener('click', () => addRoundAndScroll(defaultSelectRound()));
     container.querySelector('#add-type-btn').addEventListener('click', () => addRoundAndScroll(defaultTypeRound()));
+    container.querySelector('#add-shuffle-btn').addEventListener('click', () => addRoundAndScroll(defaultShuffleRound()));
+    container.querySelector('#add-choice-btn').addEventListener('click', () => addRoundAndScroll(defaultChoiceRound()));
 
     // Delete round
     container.querySelectorAll('.round-card__del').forEach(btn => {
@@ -423,6 +527,49 @@ export function mountCreate(container, initialData = null) {
       ta.addEventListener('input', () => {
         rounds[ri].paragraph = ta.value;
         updateTypePreview(ri);
+      });
+    });
+
+    // Shuffle round: image URL
+    container.querySelectorAll('[data-shuffle-img]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        rounds[Number(inp.dataset.shuffleImg)].imageUrl = inp.value;
+      });
+    });
+
+    // Shuffle round: sentence
+    container.querySelectorAll('[data-shuffle-sentence]').forEach(inp => {
+      const ri = Number(inp.dataset.shuffleSentence);
+      inp.addEventListener('input', () => {
+        rounds[ri].sentence = inp.value;
+        updateShufflePreview(ri);
+      });
+    });
+
+    // Choice round: question
+    container.querySelectorAll('[data-choice-question]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        rounds[Number(inp.dataset.choiceQuestion)].question = inp.value;
+      });
+    });
+
+    // Choice round: answer text
+    container.querySelectorAll('[data-choice-answer]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.choiceAnswer);
+        const ai = Number(inp.dataset.answerIdx);
+        rounds[ri].answers[ai].text = inp.value;
+        updateChoiceWarn(ri);
+      });
+    });
+
+    // Choice round: correct checkbox
+    container.querySelectorAll('[data-choice-correct]').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const ri = Number(chk.dataset.choiceCorrect);
+        const ai = Number(chk.dataset.answerIdx);
+        rounds[ri].answers[ai].correct = chk.checked;
+        updateChoiceWarn(ri);
       });
     });
 
@@ -516,6 +663,31 @@ export function mountCreate(container, initialData = null) {
     }
   }
 
+  function updateShufflePreview(ri) {
+    const previewEl = container.querySelector(`#shuffle-preview-${ri}`);
+    if (!previewEl) return;
+    const s = rounds[ri].sentence.trim();
+    const n = s ? s.split(/\s+/).length : 0;
+    previewEl.innerHTML = n > 0
+      ? `<span style="color:var(--success);">✓ ${n} word${n !== 1 ? 's' : ''}</span>`
+      : '';
+  }
+
+  function updateChoiceWarn(ri) {
+    const warnEl = container.querySelector(`#choice-warn-${ri}`);
+    if (!warnEl) return;
+    const r = rounds[ri];
+    const hasText    = r.answers.some(a => a.text.trim());
+    const hasCorrect = r.answers.some(a => a.correct && a.text.trim());
+    if (hasText && !hasCorrect) {
+      warnEl.className = 'warn-banner';
+      warnEl.innerHTML = '<span>⚠️</span><span>Mark at least one answer as correct.</span>';
+    } else {
+      warnEl.className = '';
+      warnEl.innerHTML = '';
+    }
+  }
+
   // ── Validation & submit ───────────────────────────────────────────────────
 
   async function handleSubmit() {
@@ -573,6 +745,28 @@ export function mountCreate(container, initialData = null) {
           showError(`Round ${i + 1} (Type answer) has no blanks. Wrap answers in [brackets].`);
           return;
         }
+      } else if (r.type === 'shuffle') {
+        if (!r.sentence.trim()) {
+          showError(`Round ${i + 1} (Word shuffle) needs a sentence.`);
+          return;
+        }
+        if (r.sentence.trim().split(/\s+/).length < 2) {
+          showError(`Round ${i + 1} (Word shuffle) sentence needs at least 2 words.`);
+          return;
+        }
+      } else if (r.type === 'choice') {
+        if (!r.question.trim()) {
+          showError(`Round ${i + 1} (Multiple choice) needs a question.`);
+          return;
+        }
+        if (r.answers.filter(a => a.text.trim()).length < 2) {
+          showError(`Round ${i + 1} (Multiple choice) needs at least 2 answer options.`);
+          return;
+        }
+        if (!r.answers.some(a => a.correct && a.text.trim())) {
+          showError(`Round ${i + 1} (Multiple choice): Mark at least one answer as correct.`);
+          return;
+        }
       }
     }
 
@@ -602,6 +796,17 @@ export function mountCreate(container, initialData = null) {
         }
         if (r.type === 'type') {
           return { type: 'type', paragraph: r.paragraph, seconds: r.seconds };
+        }
+        if (r.type === 'shuffle') {
+          return { type: 'shuffle', imageUrl: r.imageUrl, sentence: r.sentence, seconds: r.seconds };
+        }
+        if (r.type === 'choice') {
+          return {
+            type: 'choice',
+            question: r.question,
+            answers: r.answers.map(a => ({ text: a.text.trim(), correct: !!a.correct })),
+            seconds: r.seconds,
+          };
         }
         return {
           type: 'match',

@@ -38,7 +38,10 @@ export function createFileServer(ROOT, pages = {}) {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       return res.end(html);
     }
-    const filePath = path.join(ROOT, req.url.split('?')[0]);
+    let urlPath = req.url.split('?')[0];
+    // Serve index.html for directory roots
+    if (urlPath === '/' || urlPath === '') urlPath = '/index.html';
+    const filePath = path.join(ROOT, urlPath);
     if (!filePath.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
     try {
       const content = fs.readFileSync(filePath);

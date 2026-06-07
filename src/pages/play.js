@@ -10,9 +10,11 @@ import { createMatchingGame } from '../components/matchingGame.js';
 import { createFillGame } from '../components/fillGame.js';
 import { createSelectGame } from '../components/selectGame.js';
 import { createTypeGame } from '../components/typeGame.js';
+import { createShuffleGame } from '../components/shuffleGame.js';
+import { createChoiceGame } from '../components/choiceGame.js';
 import { createPodium } from '../components/podium.js';
 import { dedupeNickname, validateNickname } from '../lib/nicknames.js';
-import { gradeRound, gradeFillRound } from '../lib/grading.js';
+import { gradeRound, gradeFillRound, gradeShuffleRound, gradeChoiceRound } from '../lib/grading.js';
 import { parseParagraph } from '../lib/fillParsing.js';
 import { computeTimeBonus, computeRoundScore, computeTotalScore } from '../lib/scoring.js';
 import { rankPlayers } from '../lib/ranking.js';
@@ -305,6 +307,21 @@ export function mountPlay(container, code) {
           handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
         },
       });
+    } else if (round.type === 'shuffle') {
+      gameInstance = createShuffleGame({
+        sentence: roundDef.sentence,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else if (round.type === 'choice') {
+      gameInstance = createChoiceGame({
+        question: roundDef.question,
+        answers:  roundDef.answers,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
     } else {
       // match round
       const pairs = (round.pairIndices ?? []).map(i => (roundDef.pairsPool ?? [])[i]);
@@ -443,6 +460,23 @@ export function mountPlay(container, code) {
         : 0;
       const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
       roundScore = normalized + timeBonus;
+    } else if (round.type === 'shuffle') {
+      const words = (roundDef.sentence ?? '').trim().split(/\s+/);
+      totalItems   = words.length;
+      correctCount = gradeShuffleRound(submittedData, words);
+      const normalized = totalItems > 0
+        ? Math.round(correctCount / totalItems * FILL_SCORE_MAX)
+        : 0;
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
+    } else if (round.type === 'choice') {
+      totalItems   = (roundDef.answers ?? []).length;
+      correctCount = gradeChoiceRound(submittedData, roundDef.answers ?? []);
+      const normalized = totalItems > 0
+        ? Math.round(correctCount / totalItems * FILL_SCORE_MAX)
+        : 0;
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
     } else {
       // match
       totalItems   = 6;
@@ -472,12 +506,14 @@ export function mountPlay(container, code) {
   function showRoundResult(r, roundIdx, totalItems) {
     const timerRow = container.querySelector('.game-timer-row');
     if (!timerRow) return;
-    const total  = totalItems ?? 6;
-    const round  = match?.rounds?.[roundIdx];
-    const isParagraphGame = round?.type === 'fill' || round?.type === 'select' || round?.type === 'type';
-    const label  = isParagraphGame
+    const total     = totalItems ?? 6;
+    const round     = match?.rounds?.[roundIdx];
+    const roundType = round?.type;
+    const label = roundType === 'fill' || roundType === 'select' || roundType === 'type'
       ? `${r.correctPairs ?? 0}/${total} blanks correct`
-      : `${r.correctPairs ?? 0}/${total} correct`;
+      : roundType === 'shuffle'
+        ? `${r.correctPairs ?? 0}/${total} words correct`
+        : `${r.correctPairs ?? 0}/${total} correct`;
     const timeBonus = Math.max(0, (r.score ?? 0) - (r.correctPairs ?? 0));
     const bonusTxt  = r.finished
       ? `<span style="color:var(--primary)">${timeBonus >= 0 ? '+' : ''}${timeBonus}</span> bonus`

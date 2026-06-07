@@ -14,9 +14,11 @@ export function normalizeTemplate(data) {
   return {
     ...data,
     rounds: data.rounds.map(r => {
-      if (r.type === 'select') return { choices: {}, ...r };
-      if (r.type === 'fill')   return { wordBankSize: 6, ...r };
-      return r; // type or match — no extra defaults needed
+      if (r.type === 'select')  return { choices: {}, ...r };
+      if (r.type === 'fill')    return { wordBankSize: 6, ...r };
+      if (r.type === 'shuffle') return { imageUrl: '', sentence: '', ...r };
+      if (r.type === 'choice')  return { question: '', answers: [], ...r };
+      return r; // match — no extra defaults needed
     }),
   };
 }

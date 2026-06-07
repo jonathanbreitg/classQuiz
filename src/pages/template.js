@@ -30,13 +30,15 @@ export async function mountTemplate(container, templateId) {
 }
 
 function roundTypeSummary(rounds) {
-  const counts = { match: 0, fill: 0, select: 0, type: 0 };
+  const counts = { match: 0, fill: 0, select: 0, type: 0, shuffle: 0, choice: 0 };
   for (const r of rounds) if (r.type in counts) counts[r.type]++;
   const labels = [
-    counts.match  && `${counts.match} match`,
-    counts.fill   && `${counts.fill} fill-in-blank`,
-    counts.select && `${counts.select} select-word`,
-    counts.type   && `${counts.type} type-answer`,
+    counts.match   && `${counts.match} match`,
+    counts.fill    && `${counts.fill} fill-in-blank`,
+    counts.select  && `${counts.select} select-word`,
+    counts.type    && `${counts.type} type-answer`,
+    counts.shuffle && `${counts.shuffle} word-shuffle`,
+    counts.choice  && `${counts.choice} multiple-choice`,
   ].filter(Boolean);
   return labels.join(', ');
 }
@@ -95,6 +97,16 @@ function render(container, template) {
       const rtdbRounds = template.rounds.map(r => {
         if (r.type === 'fill' || r.type === 'select' || r.type === 'type') {
           const base = { type: r.type, startAt: null };
+          if (r.seconds != null) base.seconds = r.seconds;
+          return base;
+        }
+        if (r.type === 'shuffle') {
+          const base = { type: 'shuffle', startAt: null, imageUrl: r.imageUrl ?? '' };
+          if (r.seconds != null) base.seconds = r.seconds;
+          return base;
+        }
+        if (r.type === 'choice') {
+          const base = { type: 'choice', startAt: null, question: r.question ?? '', answers: r.answers ?? [] };
           if (r.seconds != null) base.seconds = r.seconds;
           return base;
         }

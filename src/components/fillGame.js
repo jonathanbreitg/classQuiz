@@ -302,5 +302,6 @@ export function createFillGame({ paragraph, wordBankSize = 6, onSubmit }) {
       cleanupDrag();
       scroller.cleanup();
     },
+    _syncBank: syncBankWithVisible, // test-only: directly triggers the isDragging guard path
   };
 }

@@ -185,6 +185,43 @@ await test('drag from bank chip to blank places the word', async () => {
   assert(ghost === null, 'Ghost element should be removed');
 });
 
+await test('setProgress mid-drag must not re-render bank (isDragging guard)', async () => {
+  // Regression: if the isDragging guard is removed from syncBankWithVisible,
+  // setProgress → scroll → onLocksChanged → syncBankWithVisible → renderBank
+  // calls bankEl.innerHTML='', orphaning the captured chip. On mobile the
+  // pointerup/cancel then never reaches bankEl, so the ghost sticks forever.
+  // On desktop Puppeteer cleans up anyway, so we detect the bug by checking
+  // that the bank chip count stays STABLE while the drag is active.
+  await reload(page);
+  const chip = await page.$('.fill-word');
+  const chipBox = await chip.boundingBox();
+  const paraBox = await page.$eval('.fill-para-wrap', e => {
+    const r = e.getBoundingClientRect();
+    return { x: r.left + 10, y: r.top + 10 };
+  });
+  await page.mouse.move(chipBox.x + chipBox.width / 2, chipBox.y + chipBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(chipBox.x + 30, chipBox.y + 5, { steps: 3 });
+  await page.mouse.move(paraBox.x, paraBox.y, { steps: 10 });
+  // Ghost exists, drag is active. Confirm dragging class is applied.
+  const hasDraggingBeforeSync = await page.$('.fill-word--dragging');
+  assert(hasDraggingBeforeSync !== null, 'Drag threshold crossed: chip should have --dragging class');
+  // Directly call syncBankWithVisible during active drag. Without the isDragging guard,
+  // this would run renderBank → bankEl.innerHTML='' → orphan the captured chip →
+  // pointer capture lost → ghost freezes on mobile. Detect by checking --dragging class.
+  await page.evaluate(() => window.__game._syncBank());
+  await new Promise(r => setTimeout(r, 30));
+  // With the guard in place, renderBank is skipped (isDragging=true) and the chip keeps its class.
+  // Without the guard, renderBank destroys and recreates all chips without --dragging.
+  const hasDraggingAfterSync = await page.$('.fill-word--dragging');
+  assert(hasDraggingAfterSync !== null,
+    'Dragged chip lost --dragging class: renderBank ran during active drag (isDragging guard missing)');
+  await page.mouse.up();
+  await new Promise(r => setTimeout(r, 100));
+  const ghost = await page.$('.fill-word--ghost');
+  assert(ghost === null, 'Ghost must be cleaned up after drag ends');
+});
+
 // ── E. Layout / visual regression ────────────────────────────────────────────
 await navFn(BASE);
 await runLayoutChecks(page, test, assert);

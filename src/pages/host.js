@@ -184,6 +184,36 @@ export function mountHost(container, code) {
   // ── Playing ──────────────────────────────────────────────
 
   function renderPlaying(isHost) {
+    const round     = match.rounds?.[match.currentRound];
+    const roundType = round?.type;
+    const CLRS      = ['a', 'b', 'c', 'd'];
+
+    let extraContent = '';
+    if (roundType === 'shuffle') {
+      extraContent = round.imageUrl
+        ? `<img src="${esc(round.imageUrl)}" class="host-shuffle-img" alt="Round image">`
+        : `<div class="host-shuffle-noimg">No image provided</div>`;
+    } else if (roundType === 'choice') {
+      const qa = round.answers ?? [];
+      extraContent = `
+        <div class="host-choice-view">
+          <div class="host-choice-question">${esc(round.question ?? '')}</div>
+          <div class="host-choice-answers">
+            ${qa.map((a, i) => `
+              <div class="host-choice-btn host-choice-btn--${CLRS[i] ?? 'a'}">
+                <span class="host-choice-letter">${String.fromCharCode(65 + i)}</span>
+                <span>${esc(a.text ?? '')}</span>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    } else {
+      extraContent = `
+        <div style="text-align:center;">
+          <div class="round-label">Round</div>
+          <div class="round-num">${match.currentRound + 1} <span style="font-size:1.2rem;color:var(--text-2);">/ ${match.template.numRounds}</span></div>
+        </div>`;
+    }
+
     container.innerHTML = `
       <div class="page host-page">
         <div class="host-header">
@@ -196,11 +226,8 @@ export function mountHost(container, code) {
           </div>
         </div>
 
-        <div class="host-body" style="align-items:center;justify-content:center;gap:28px;">
-          <div style="text-align:center;">
-            <div class="round-label">Round</div>
-            <div class="round-num">${match.currentRound + 1} <span style="font-size:1.2rem;color:var(--text-2);">/ ${match.template.numRounds}</span></div>
-          </div>
+        <div class="host-body" style="align-items:center;justify-content:center;gap:${roundType === 'shuffle' ? '12px' : '28px'}">
+          ${extraContent}
           <div class="timer-display" id="timer-display">—</div>
           <div style="width:100%;max-width:520px;">
             <div class="timer-bar-wrap">
@@ -218,7 +245,6 @@ export function mountHost(container, code) {
       container.querySelector('#end-btn').addEventListener('click', () => hostEndRound());
     }
 
-    const round = match.rounds?.[match.currentRound];
     if (round?.startAt) tickPlaying(round, match.template.config, isHost);
   }
 
@@ -309,9 +335,24 @@ export function mountHost(container, code) {
   // ── Results ──────────────────────────────────────────────
 
   function renderResults(isHost) {
-    const cfg     = match.template.config;
-    // FIX 4: players come from allPlayers, not match
-    const players = Object.values(allPlayers);
+    const cfg       = match.template.config;
+    const players   = Object.values(allPlayers);
+    const round     = match.rounds?.[match.currentRound];
+    const CLRS      = ['a', 'b', 'c', 'd'];
+
+    let revealContent = '';
+    if (round?.type === 'choice') {
+      const qa = round.answers ?? [];
+      revealContent = `
+        <div class="host-choice-reveal">
+          ${qa.map((a, i) => `
+            <div class="host-choice-btn host-choice-btn--${CLRS[i] ?? 'a'} ${a.correct ? 'host-choice-btn--reveal-correct' : 'host-choice-btn--reveal-wrong'}">
+              <span class="host-choice-letter">${String.fromCharCode(65 + i)}</span>
+              <span>${esc(a.text ?? '')}</span>
+              ${a.correct ? `<span class="host-choice-tick">✓</span>` : ''}
+            </div>`).join('')}
+        </div>`;
+    }
 
     container.innerHTML = `
       <div class="page host-page">
@@ -326,6 +367,7 @@ export function mountHost(container, code) {
         </div>
         <div class="host-body">
           <div class="results-view">
+            ${revealContent}
             <div class="results-header">
               <h3>Leaderboard</h3>
               <span class="results-countdown" id="res-cd"></span>

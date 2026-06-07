@@ -45,11 +45,6 @@ export function createTypeGame({ paragraph, onSubmit }) {
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        // Move focus BEFORE committing so the keyboard never closes between blanks.
-        // If focus transfers while still in the keydown handler, mobile browsers treat
-        // it as a direct input-to-input handoff and keep the keyboard open.
-        // Capturing value now because the blur from focusNextBlank fires synchronously
-        // and calls commitAnswer via the blur handler before we reach our explicit call.
         const value = input.value;
         focusNextBlank(i);
         commitAnswer(i, value);
@@ -72,8 +67,6 @@ export function createTypeGame({ paragraph, onSubmit }) {
   function focusNextBlank(fromIdx) {
     for (let i = fromIdx + 1; i < totalBlanks; i++) {
       if (inputEls[i] && placed[i] === undefined && !scroller.isLocked(i)) {
-        // preventScroll: true stops the browser from doing its own scroll-to-focused-element,
-        // which would conflict with onBlankAnswered's lerp scroll.
         inputEls[i].focus({ preventScroll: true });
         return;
       }

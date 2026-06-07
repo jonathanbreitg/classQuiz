@@ -4,7 +4,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "node tests/fill-game.test.mjs & node tests/select-game.test.mjs & node tests/type-game.test.mjs & node tests/create-page.test.mjs & wait",
+    "test:ui": "node tests/app-smoke.test.mjs & node tests/fill-game.test.mjs & node tests/select-game.test.mjs & node tests/type-game.test.mjs & node tests/create-page.test.mjs & node tests/shuffle-game.test.mjs & node tests/choice-game.test.mjs & wait",
     "test:all": "vitest run && npm run test:ui"
   },
   "devDependencies": {
