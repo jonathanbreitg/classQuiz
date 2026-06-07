@@ -3,9 +3,13 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:ui": "node tests/fill-game.test.mjs & node tests/select-game.test.mjs & node tests/type-game.test.mjs & node tests/create-page.test.mjs & wait",
+    "test:all": "vitest run && npm run test:ui"
   },
   "devDependencies": {
+    "playwright": "^1.60.0",
+    "puppeteer": "^25.1.0",
     "vitest": "^2.0.0"
   }
 }

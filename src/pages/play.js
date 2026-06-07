@@ -7,12 +7,18 @@ import {
   doc, getDoc,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { createMatchingGame } from '../components/matchingGame.js';
+import { createFillGame } from '../components/fillGame.js';
+import { createSelectGame } from '../components/selectGame.js';
+import { createTypeGame } from '../components/typeGame.js';
 import { createPodium } from '../components/podium.js';
 import { dedupeNickname, validateNickname } from '../lib/nicknames.js';
-import { gradeRound } from '../lib/grading.js';
+import { gradeRound, gradeFillRound } from '../lib/grading.js';
+import { parseParagraph } from '../lib/fillParsing.js';
 import { computeTimeBonus, computeRoundScore, computeTotalScore } from '../lib/scoring.js';
 import { rankPlayers } from '../lib/ranking.js';
-import { READY_COUNTDOWN_SECONDS } from '../lib/constants.js';
+import { normalizeTemplate } from '../lib/templateNormalize.js';
+import { randomUUID } from '../lib/codeGen.js';
+import { READY_COUNTDOWN_SECONDS, FILL_SCORE_MAX } from '../lib/constants.js';
 
 export function mountPlay(container, code) {
   const matchRef = ref(rtdb, `matches/${code}`);
@@ -27,19 +33,16 @@ export function mountPlay(container, code) {
   let cdOverlay      = null;
   const submitted    = {};
 
-  // FIX 1: pairsPool fetched from Firestore once, not embedded in RTDB
-  let pairsPool      = null;
+  // Full Firestore template data (rounds, pairsPool per round, etc.)
+  let templateData     = null;
   let templateFetching = false;
 
-  // FIX 4: own player data from matchPlayers/{code}/{pid}
   let myPlayerData   = null;
   let unsubMyPlayer  = null;
 
-  // Final standings (subscribed lazily when reaching podium)
   let finalPlayers   = null;
   let unsubFinal     = null;
 
-  // Presence listener on .info/connected (FIX 3)
   let unsubConnected = null;
 
   showLoading(container);
@@ -51,48 +54,48 @@ export function mountPlay(container, code) {
     dispatch();
   });
 
-  // ── Template fetch (FIX 1) ────────────────────────────────
+  // ── Template fetch ────────────────────────────────────────────────────────
 
   async function ensureTemplate() {
-    if (pairsPool || templateFetching || !match?.templateId) return;
+    if (templateData || templateFetching || !match?.templateId) return;
     templateFetching = true;
     try {
       const snap = await getDoc(doc(db, 'templates', match.templateId));
-      if (snap.exists()) pairsPool = snap.data().pairsPool;
+      if (snap.exists()) {
+        templateData = normalizeTemplate(snap.data());
+      }
     } catch (e) { console.error('Template fetch failed:', e); }
     templateFetching = false;
     dispatch();
   }
 
-  // ── Own player subscription (FIX 4) ──────────────────────
+  // ── Own player subscription ───────────────────────────────────────────────
 
   function subscribeToMyPlayer() {
     if (unsubMyPlayer || !playerId) return;
     unsubMyPlayer = onValue(ref(rtdb, `matchPlayers/${code}/${playerId}`), snap => {
       myPlayerData = snap.val();
-      // Update score display if we're waiting on force-submit data
       if (currentView?.startsWith('results-')) {
         const roundIdx = Number(currentView.split('-')[1]);
         const r = myPlayerData?.rounds?.[roundIdx];
-        if (r && submitted[roundIdx]) showRoundResult(r.correctPairs, 0, r.score, false);
+        if (r && submitted[roundIdx]) showRoundResult(r, roundIdx);
       }
     });
   }
 
-  // ── Presence (FIX 3) ────────────────────────────────────
+  // ── Presence ──────────────────────────────────────────────────────────────
 
   function setupPresence() {
     if (unsubConnected || !playerId) return;
     const playerRef = ref(rtdb, `matchPlayers/${code}/${playerId}`);
     unsubConnected = onValue(ref(rtdb, '.info/connected'), snap => {
       if (!snap.val()) return;
-      // Re-register onDisconnect and mark connected on every (re)connect
       onDisconnect(ref(rtdb, `matchPlayers/${code}/${playerId}/connected`)).set(false);
       update(playerRef, { connected: true });
     });
   }
 
-  // ── Dispatch ──────────────────────────────────────────────
+  // ── Dispatch ──────────────────────────────────────────────────────────────
 
   function dispatch() {
     if (!match) return;
@@ -109,21 +112,15 @@ export function mountPlay(container, code) {
       return;
     }
 
-    // Subscribe to own player data as soon as we have a playerId
     if (playerId && !unsubMyPlayer) subscribeToMyPlayer();
 
     if (state === 'lobby') {
-      if (currentView !== 'lobby') {
-        currentView = 'lobby';
-        renderLobby();
-      } else {
-        updateLobbyCount();
-      }
+      if (currentView !== 'lobby') { currentView = 'lobby'; renderLobby(); }
+      else { updateLobbyCount(); }
       return;
     }
 
-    // Playing and results states require pairsPool
-    if (!pairsPool) { ensureTemplate(); return; }
+    if (!templateData) { ensureTemplate(); return; }
 
     const roundIdx = match.currentRound;
 
@@ -148,16 +145,15 @@ export function mountPlay(container, code) {
         if (!submitted[roundIdx] && gameInstance) {
           submitted[roundIdx] = true;
           gameInstance.reveal();
-          // Show whatever score we have; myPlayerData listener will update if force-submit arrives later
           const r = myPlayerData?.rounds?.[roundIdx];
-          showRoundResult(r?.correctPairs ?? 0, 0, r?.score ?? 0, false);
+          if (r) showRoundResult(r, roundIdx);
         }
       }
       return;
     }
   }
 
-  // ── Join form ────────────────────────────────────────────
+  // ── Join form ─────────────────────────────────────────────────────────────
 
   function renderJoinForm() {
     if (match.state !== 'lobby') return showErrPage(container, '🚫', 'Game already started', 'You can only join during the lobby.');
@@ -175,7 +171,8 @@ export function mountPlay(container, code) {
           <div class="card" style="width:100%;max-width:400px;">
             <div class="form-group" style="margin-bottom:16px;">
               <label class="form-label" for="nick-input">Your nickname</label>
-              <input id="nick-input" class="input" type="text" maxlength="20" placeholder="e.g. Alex" autocomplete="off" autocorrect="off">
+              <input id="nick-input" class="input" type="text" maxlength="20" placeholder="e.g. Alex"
+                autocomplete="off" autocorrect="off">
               <span id="nick-error" class="form-error" style="display:none;"></span>
             </div>
             <button class="btn btn--primary btn--full btn--lg" id="join-btn">Join →</button>
@@ -200,7 +197,6 @@ export function mountPlay(container, code) {
       }
       joinBtn.disabled = true;
       try {
-        // FIX 4: read existing players from matchPlayers/{code}
         const pSnap = await get(ref(rtdb, `matchPlayers/${code}`));
         const sSnap = await get(ref(rtdb, `matches/${code}/state`));
         const existing = pSnap.val() || {};
@@ -210,24 +206,21 @@ export function mountPlay(container, code) {
 
         const finalNick = dedupeNickname(validated, Object.values(existing).map(p => p.nickname));
         if (!playerId) {
-          playerId = crypto.randomUUID();
+          playerId = randomUUID();
           localStorage.setItem(`playerId_${code}`, playerId);
         }
         nickname = finalNick;
         localStorage.setItem(`nickname_${code}`, finalNick);
 
-        // FIX 4: write player record to matchPlayers/{code}/{pid}
         const playerRef = ref(rtdb, `matchPlayers/${code}/${playerId}`);
         await set(playerRef, {
           nickname: finalNick, joinedAt: serverTimestamp(),
           connected: true, totalScore: 0, rounds: {},
         });
-        // Increment total player count atomically (FIX 2)
         await update(matchRef, { playerCount: increment(1) });
 
         subscribeToMyPlayer();
         setupPresence();
-
         currentView = 'lobby';
         renderLobby();
       } catch (err) {
@@ -239,7 +232,7 @@ export function mountPlay(container, code) {
     });
   }
 
-  // ── Lobby ────────────────────────────────────────────────
+  // ── Lobby ──────────────────────────────────────────────────────────────────
 
   function renderLobby() {
     container.innerHTML = `
@@ -265,16 +258,15 @@ export function mountPlay(container, code) {
     el.textContent = `${n} player${n !== 1 ? 's' : ''} joined`;
   }
 
-  // ── Playing ──────────────────────────────────────────────
+  // ── Playing ───────────────────────────────────────────────────────────────
 
   function renderPlaying() {
     const roundIdx = match.currentRound;
     if (submitted[roundIdx]) return renderWaiting();
 
-    const round = match.rounds[roundIdx];
-    const cfg   = match.template.config;
-    // FIX 1: pairsPool comes from Firestore, not RTDB
-    const pairs = round.pairIndices.map(i => pairsPool[i]);
+    const round    = match.rounds[roundIdx];
+    const cfg      = match.template.config;
+    const roundDef = templateData.rounds[roundIdx];
 
     container.innerHTML = `
       <div class="page play-page">
@@ -290,12 +282,40 @@ export function mountPlay(container, code) {
       </div>
     `;
 
-    gameInstance = createMatchingGame({
-      pairs,
-      onSubmit(connections, finished) {
-        handleSubmit(roundIdx, round, cfg, connections, finished);
-      },
-    });
+    if (round.type === 'fill') {
+      gameInstance = createFillGame({
+        paragraph:    roundDef.paragraph,
+        wordBankSize: roundDef.wordBankSize,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else if (round.type === 'select') {
+      gameInstance = createSelectGame({
+        paragraph: roundDef.paragraph,
+        choices:   roundDef.choices,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else if (round.type === 'type') {
+      gameInstance = createTypeGame({
+        paragraph: roundDef.paragraph,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else {
+      // match round
+      const pairs = (round.pairIndices ?? []).map(i => (roundDef.pairsPool ?? [])[i]);
+      gameInstance = createMatchingGame({
+        pairs,
+        onSubmit(connections, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, connections, finished);
+        },
+      });
+    }
+
     container.querySelector('#game-area').appendChild(gameInstance.el);
 
     if (round.startAt) tickRound();
@@ -312,20 +332,25 @@ export function mountPlay(container, code) {
     `;
   }
 
+  // ── Tick ──────────────────────────────────────────────────────────────────
+
   function tickRound() {
     if (submitted[match.currentRound]) return;
-    if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    clearTick();
     hideCd();
     const roundIdx = match.currentRound;
     const round    = match.rounds?.[roundIdx];
     if (!round?.startAt) return;
 
     const cfg       = match.template.config;
-    const totalMs   = cfg.minigameSeconds * 1000;
+    const totalMs   = (round.seconds ?? cfg.minigameSeconds) * 1000;
     const cntdownMs = READY_COUNTDOWN_SECONDS * 1000;
 
-    tickInterval = setInterval(() => {
-      if (!currentView?.startsWith('playing')) { clearTick(); return; }
+    let rafId = null;
+    let lastCdN = -1;
+
+    function frame() {
+      if (!currentView?.startsWith('playing') || submitted[roundIdx]) { clearTick(); return; }
 
       const now     = serverNow();
       const elapsed = now - round.startAt;
@@ -335,18 +360,22 @@ export function mountPlay(container, code) {
 
       if (elapsed < cntdownMs) {
         const n = Math.ceil((cntdownMs - elapsed) / 1000);
-        timerEl.textContent = n;
-        timerEl.className   = 'game-timer-num';
-        if (barEl) barEl.style.width = '100%';
-        showCd(n);
+        if (n !== lastCdN) {
+          lastCdN = n;
+          timerEl.textContent = n;
+          timerEl.className   = 'game-timer-num';
+          if (barEl) barEl.style.width = '100%';
+          showCd(n);
+        }
       } else {
-        hideCd();
+        if (lastCdN !== 0) { lastCdN = 0; hideCd(); }
         const gameArea = container.querySelector('#game-area');
-        if (gameArea) gameArea.style.visibility = '';
+        if (gameArea?.style.visibility) gameArea.style.visibility = '';
         const gameElapsed = elapsed - cntdownMs;
         const remaining   = Math.max(0, totalMs - gameElapsed);
         const pct         = remaining / totalMs;
         const col         = timeColor(pct);
+
         timerEl.textContent  = (remaining / 1000).toFixed(1);
         timerEl.className    = 'game-timer-num';
         timerEl.style.color  = col;
@@ -355,11 +384,25 @@ export function mountPlay(container, code) {
           barEl.className        = 'timer-bar';
           barEl.style.background = col;
         }
-        if (remaining === 0 && gameInstance && !submitted[roundIdx]) {
-          clearTick(); gameInstance.forceSubmit();
+
+        if (gameInstance?.setProgress) {
+          gameInstance.setProgress(1 - pct);
+        }
+
+        if (remaining === 0) {
+          clearTick();
+          if (!submitted[roundIdx]) gameInstance?.forceSubmit();
+          return;
         }
       }
-    }, 100);
+
+      rafId = requestAnimationFrame(frame);
+    }
+
+    // Store cancel handle in tickInterval slot so clearTick() works
+    tickInterval = { _raf: null };
+    rafId = requestAnimationFrame(frame);
+    tickInterval._raf = () => { if (rafId) cancelAnimationFrame(rafId); };
   }
 
   function showCd(n) {
@@ -377,7 +420,9 @@ export function mountPlay(container, code) {
   }
   function hideCd() { if (cdOverlay) { cdOverlay.remove(); cdOverlay = null; } }
 
-  async function handleSubmit(roundIdx, round, cfg, connections, finished) {
+  // ── Submit ────────────────────────────────────────────────────────────────
+
+  async function handleSubmit(roundIdx, round, roundDef, cfg, submittedData, finished) {
     if (submitted[roundIdx]) return;
     submitted[roundIdx] = true;
     clearTick(); hideCd();
@@ -387,22 +432,36 @@ export function mountPlay(container, code) {
     const elapsed     = now - gameStart;
     const remainingMs = Math.max(0, cfg.minigameSeconds * 1000 - elapsed);
 
-    const correctPairs = gradeRound(connections);
-    const timeBonus    = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
-    const roundScore   = computeRoundScore(correctPairs, timeBonus);
+    let correctCount, totalItems, roundScore;
+
+    if (round.type === 'fill' || round.type === 'select' || round.type === 'type') {
+      const { answers } = parseParagraph(roundDef.paragraph);
+      totalItems   = answers.length;
+      correctCount = gradeFillRound(submittedData, answers);
+      const normalized = totalItems > 0
+        ? Math.round(correctCount / totalItems * FILL_SCORE_MAX)
+        : 0;
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
+    } else {
+      // match
+      totalItems   = 6;
+      correctCount = gradeRound(submittedData);
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = computeRoundScore(correctCount, timeBonus);
+    }
 
     if (gameInstance) gameInstance.reveal();
-    showRoundResult(correctPairs, timeBonus, roundScore, finished);
+    showRoundResult({ correctPairs: correctCount, score: roundScore, finished }, roundIdx, totalItems);
 
     try {
       const existing   = myPlayerData?.rounds || {};
-      const allRounds  = { ...existing, [roundIdx]: { finished, correctPairs, timeLeftMs: remainingMs, score: roundScore } };
+      const allRounds  = { ...existing, [roundIdx]: { finished, correctPairs: correctCount, timeLeftMs: remainingMs, score: roundScore } };
       const totalScore = computeTotalScore(Object.values(allRounds));
 
-      // FIX 4: write to matchPlayers/{code}/{pid} — does NOT trigger match onValue listener
       await update(ref(rtdb, `matchPlayers/${code}/${playerId}`), {
         [`rounds/${roundIdx}`]: {
-          finished, correctPairs, timeLeftMs: remainingMs, score: roundScore,
+          finished, correctPairs: correctCount, timeLeftMs: remainingMs, score: roundScore,
           submittedAt: serverTimestamp(),
         },
         totalScore,
@@ -410,26 +469,35 @@ export function mountPlay(container, code) {
     } catch (err) { console.error('Save failed:', err); }
   }
 
-  function showRoundResult(correctPairs, timeBonus, roundScore, finished) {
+  function showRoundResult(r, roundIdx, totalItems) {
     const timerRow = container.querySelector('.game-timer-row');
     if (!timerRow) return;
+    const total  = totalItems ?? 6;
+    const round  = match?.rounds?.[roundIdx];
+    const isParagraphGame = round?.type === 'fill' || round?.type === 'select' || round?.type === 'type';
+    const label  = isParagraphGame
+      ? `${r.correctPairs ?? 0}/${total} blanks correct`
+      : `${r.correctPairs ?? 0}/${total} correct`;
+    const timeBonus = Math.max(0, (r.score ?? 0) - (r.correctPairs ?? 0));
+    const bonusTxt  = r.finished
+      ? `<span style="color:var(--primary)">${timeBonus >= 0 ? '+' : ''}${timeBonus}</span> bonus`
+      : 'no bonus';
     timerRow.innerHTML = `
       <div class="game-score-summary">
-        <span class="game-score-summary__pill">${correctPairs}/6 correct</span>
-        <span class="game-score-summary__stat">${finished ? `<span style="color:var(--primary)">+${timeBonus}</span> bonus` : 'no bonus'}</span>
-        <span class="game-score-summary__score">${roundScore} pts</span>
+        <span class="game-score-summary__pill">${label}</span>
+        <span class="game-score-summary__stat">${bonusTxt}</span>
+        <span class="game-score-summary__score">${r.score ?? 0} pts</span>
         <span class="game-score-summary__waiting">Waiting…</span>
       </div>
     `;
   }
 
-  // ── Final / Podium ───────────────────────────────────────
+  // ── Final / Podium ─────────────────────────────────────────────────────────
 
   function renderFinal() {
     clearTick();
 
     if (!finalPlayers) {
-      // Subscribe to all players lazily — only needed once at game end
       if (!unsubFinal) {
         unsubFinal = onValue(ref(rtdb, `matchPlayers/${code}`), snap => {
           finalPlayers = Object.values(snap.val() || {});
@@ -463,10 +531,12 @@ export function mountPlay(container, code) {
     container.querySelector('#pod-area').appendChild(createPodium(finalPlayers));
   }
 
-  // ── Helpers ──────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   function clearTick() {
-    if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    if (tickInterval?._raf) tickInterval._raf();
+    else if (tickInterval)  clearInterval(tickInterval);
+    tickInterval = null;
     hideCd();
   }
 
@@ -500,5 +570,5 @@ function showErrPage(c, icon, title, msg) {
 }
 
 function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

@@ -7,5 +7,7 @@ export const READY_COUNTDOWN_SECONDS = 3;
 export const PODIUM_REVEAL_SECONDS = 3;
 export const BONUS_MAX = 6;
 export const PAIRS_PER_ROUND = 6;
+export const FILL_SCORE_MAX = 6;      // fill-game correct blanks normalized to this scale
+export const FILL_WORD_BANK_SIZE = 6; // default word bank size
 export const NICKNAME_MAX = 20;
 export const STALE_MATCH_HOURS = 6;

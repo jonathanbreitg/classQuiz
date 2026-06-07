@@ -2,15 +2,16 @@ import { navigate } from '../router.js';
 import { icon } from '../lib/icons.js';
 import { db, rtdb } from '../firebase.js';
 import {
-  doc, getDoc, addDoc, collection, serverTimestamp as fsTimestamp,
+  doc, getDoc,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   ref, get, set, update, serverTimestamp as rtdbTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-import { generateUniqueCode } from '../lib/codeGen.js';
+import { generateUniqueCode, randomUUID } from '../lib/codeGen.js';
 import { sampleRounds } from '../lib/poolSampling.js';
 import { STALE_MATCH_HOURS } from '../lib/constants.js';
 import { findStaleCodes } from '../lib/pruning.js';
+import { normalizeTemplate } from '../lib/templateNormalize.js';
 
 export async function mountTemplate(container, templateId) {
   showLoading(container);
@@ -19,7 +20,7 @@ export async function mountTemplate(container, templateId) {
   try {
     const snap = await getDoc(doc(db, 'templates', templateId));
     if (!snap.exists()) return showNotFound(container);
-    template = { id: snap.id, ...snap.data() };
+    template = normalizeTemplate({ id: snap.id, ...snap.data() });
   } catch (err) {
     console.error(err);
     return showError(container, 'Failed to load template.');
@@ -28,18 +29,30 @@ export async function mountTemplate(container, templateId) {
   render(container, template);
 }
 
+function roundTypeSummary(rounds) {
+  const counts = { match: 0, fill: 0, select: 0, type: 0 };
+  for (const r of rounds) if (r.type in counts) counts[r.type]++;
+  const labels = [
+    counts.match  && `${counts.match} match`,
+    counts.fill   && `${counts.fill} fill-in-blank`,
+    counts.select && `${counts.select} select-word`,
+    counts.type   && `${counts.type} type-answer`,
+  ].filter(Boolean);
+  return labels.join(', ');
+}
+
 function render(container, template) {
+  const numRounds = template.rounds.length;
   const forkedNote = template.forkedFrom
-    ? `<p class="forked-from">Forked from another template</p>`
-    : '';
+    ? `<p class="forked-from">Forked from another template</p>` : '';
 
   container.innerHTML = `
     <div class="page template-page">
       <div class="template-card card card--elevated">
         <div class="template-card__title">${escHtml(template.title)}</div>
         <div class="template-meta">
-          <span class="badge badge--primary">${template.numRounds} round${template.numRounds !== 1 ? 's' : ''}</span>
-          <span class="badge">${template.pairsPool.length} pairs</span>
+          <span class="badge badge--primary">${numRounds} round${numRounds !== 1 ? 's' : ''}</span>
+          <span class="badge">${roundTypeSummary(template.rounds)}</span>
         </div>
         ${forkedNote}
       </div>
@@ -58,25 +71,10 @@ function render(container, template) {
 
   container.querySelector('#home-btn').addEventListener('click', () => navigate('/'));
 
-  container.querySelector('#fork-btn').addEventListener('click', async () => {
-    const btn = container.querySelector('#fork-btn');
-    btn.disabled = true;
-    statusEl.textContent = 'Forking…';
-    try {
-      const docRef = await addDoc(collection(db, 'templates'), {
-        title: template.title,
-        numRounds: template.numRounds,
-        pairsPool: template.pairsPool,
-        config: template.config,
-        forkedFrom: template.id,
-        createdAt: fsTimestamp(),
-      });
-      navigate(`/edit/${docRef.id}`);
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = 'Fork failed. Try again.';
-      btn.disabled = false;
-    }
+  container.querySelector('#fork-btn').addEventListener('click', () => {
+    // Navigate to the edit page pre-filled with this template's data.
+    // Saving from there always creates a new document — the original stays immutable.
+    navigate(`/edit/${template.id}`);
   });
 
   container.querySelector('#start-btn').addEventListener('click', async () => {
@@ -92,29 +90,42 @@ function render(container, template) {
         return snap.exists() && snap.val() !== 'finished';
       });
 
-      const rounds = sampleRounds(template.pairsPool.length, template.numRounds)
-        .map(pairIndices => ({ pairIndices, startAt: null }));
+      // Build RTDB round entries: match rounds get precomputed pairIndices,
+      // paragraph rounds (fill, select, type) just need type and startAt.
+      const rtdbRounds = template.rounds.map(r => {
+        if (r.type === 'fill' || r.type === 'select' || r.type === 'type') {
+          const base = { type: r.type, startAt: null };
+          if (r.seconds != null) base.seconds = r.seconds;
+          return base;
+        }
+        // match
+        const pool = r.pairsPool ?? [];
+        const pairIndices = pool.length >= 6
+          ? sampleRounds(pool.length, 1)[0]
+          : Array.from({ length: pool.length }, (_, i) => i);
+        const base = { type: 'match', pairIndices, startAt: null };
+        if (r.seconds != null) base.seconds = r.seconds;
+        return base;
+      });
 
-      const hostToken = crypto.randomUUID();
+      const hostToken = randomUUID();
       localStorage.setItem(`hostToken_${code}`, hostToken);
 
       const createdAt = rtdbTimestamp();
 
-      // FIX 1: pairsPool excluded from RTDB — players fetch it from Firestore.
-      // FIX 2: matchMeta written for lightweight pruning index.
       await set(ref(rtdb, `matches/${code}`), {
         templateId: template.id,
         template: {
-          title: template.title,
-          numRounds: template.numRounds,
-          config: template.config,
+          title:     template.title,
+          numRounds: template.rounds.length,
+          config:    template.config,
         },
         hostToken,
         maxPlayers: 100,
         playerCount: 0,
         state: 'lobby',
         currentRound: -1,
-        rounds,
+        rounds: rtdbRounds,
         createdAt,
         lastActiveAt: createdAt,
       });
@@ -130,16 +141,13 @@ function render(container, template) {
   });
 }
 
-// FIX 2: reads lightweight matchMeta index instead of full matches tree.
 async function pruneStaleMatches() {
   const staleMs = STALE_MATCH_HOURS * 3600 * 1000;
   try {
     const snap = await get(ref(rtdb, 'matchMeta'));
     if (!snap.exists()) return;
-
     const staleCodes = findStaleCodes(snap.val(), Date.now(), staleMs);
     if (!staleCodes.length) return;
-
     const updates = {};
     for (const code of staleCodes) {
       updates[`matches/${code}`]      = null;
@@ -161,8 +169,7 @@ function showNotFound(container) {
       <h2>Template not found</h2>
       <p>This link may be invalid or the template was removed.</p>
       <button class="btn btn--secondary" id="h">Go home</button>
-    </div>
-  `;
+    </div>`;
   container.querySelector('#h').addEventListener('click', () => navigate('/'));
 }
 
@@ -173,11 +180,10 @@ function showError(container, msg) {
       <h2>Something went wrong</h2>
       <p>${escHtml(msg)}</p>
       <button class="btn btn--secondary" id="h">Go home</button>
-    </div>
-  `;
+    </div>`;
   container.querySelector('#h').addEventListener('click', () => navigate('/'));
 }
 
 function escHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
