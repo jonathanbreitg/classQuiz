@@ -127,6 +127,65 @@ await test('focus advances to next blank after Enter commit', async () => {
   assert(nextFocused, 'Focus should move to blank 2');
 });
 
+await test('readOnly is set on previous blank only AFTER focus has moved away (keyboard-open invariant)', async () => {
+  // Regression: if commitAnswer (which sets readOnly) runs before focusNextBlank,
+  // the currently-focused input becomes readOnly while active — mobile browsers see
+  // that and dismiss the keyboard before the next input gets focus, causing a layout
+  // shift. Fix: focusNextBlank before commitAnswer so readOnly is only set in the
+  // blur handler, after the browser has already moved focus to the next input.
+  //
+  // We intercept the readOnly setter synchronously (Object.defineProperty) to capture
+  // document.activeElement at the exact moment readOnly is assigned. In the buggy
+  // version: activeElement === blank0 (still focused). In the fixed version:
+  // focusNextBlank fires first → blur fires → commitAnswer runs → activeElement
+  // is already blank1, so blank0's readOnly is set while it is NOT active.
+  await reload(page, '.type-blank-input');
+  await page.evaluate(() => {
+    const input0 = document.querySelector('[data-idx="0"] .type-blank-input');
+    const origDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'readOnly');
+    window.__readOnlySetWhileActive = null;
+    Object.defineProperty(input0, 'readOnly', {
+      set(v) {
+        if (v === true && window.__readOnlySetWhileActive === null) {
+          window.__readOnlySetWhileActive = (document.activeElement === input0);
+        }
+        origDesc.set.call(this, v);
+      },
+      get() { return origDesc.get.call(this); },
+      configurable: true,
+    });
+  });
+  await page.keyboard.type('cat');
+  await page.keyboard.press('Enter');
+  const setWhileActive = await page.evaluate(() => window.__readOnlySetWhileActive);
+  assert(setWhileActive === false,
+    'readOnly must be set while blank 0 is NOT the activeElement — if true, mobile keyboard dismissed mid-transfer');
+});
+
+await test('focusNextBlank uses preventScroll:true to avoid browser scroll conflict', async () => {
+  // Regression: focus() without preventScroll causes the browser to immediately
+  // scroll the element into view, conflicting with onBlankAnswered's lerp scroll.
+  // On mobile this manifests as the paragraph jumping up and down after each Enter.
+  await reload(page, '.type-blank-input');
+  await page.evaluate(() => {
+    const orig = HTMLElement.prototype.focus;
+    window.__typeInputFocusCalls = [];
+    HTMLElement.prototype.focus = function(opts) {
+      if (this.classList.contains('type-blank-input')) {
+        window.__typeInputFocusCalls.push({ preventScroll: opts?.preventScroll ?? false });
+      }
+      return orig.call(this, opts);
+    };
+    window.__typeInputFocusCalls = []; // clear the call from the initial mount focus
+  });
+  await page.keyboard.type('cat');
+  await page.keyboard.press('Enter');
+  const calls = await page.evaluate(() => window.__typeInputFocusCalls);
+  assert(calls.length > 0, 'Expected at least one type-blank-input focus call during Enter');
+  assert(calls.every(c => c.preventScroll),
+    `All focusNextBlank calls must use {preventScroll:true} — got: ${JSON.stringify(calls)}`);
+});
+
 await test('blur commits the answer', async () => {
   await page.evaluate(() => { document.querySelector('[data-idx="2"] .type-blank-input').focus(); });
   await page.keyboard.type('stare');
