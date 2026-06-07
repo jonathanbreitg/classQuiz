@@ -76,6 +76,32 @@ export function mountCreate(container, initialData = null) {
             seconds:  r.seconds   ?? MINIGAME_SECONDS,
           };
         }
+        if (r.type === 'correct') {
+          return {
+            type:       'correct',
+            sentence:   r.sentence   ?? '',
+            wrongIndex: r.wrongIndex ?? 0,
+            correction: r.correction ?? '',
+            seconds:    r.seconds    ?? MINIGAME_SECONDS,
+          };
+        }
+        if (r.type === 'order') {
+          return {
+            type:      'order',
+            sentences: (r.sentences ?? []).map(s => s ?? ''),
+            seconds:   r.seconds ?? MINIGAME_SECONDS,
+          };
+        }
+        if (r.type === 'connections') {
+          return {
+            type:    'connections',
+            groups:  (r.groups ?? []).map(g => ({
+              label: g.label ?? '',
+              words: (g.words ?? ['', '', '', '']).map(w => w ?? ''),
+            })),
+            seconds: r.seconds ?? 60,
+          };
+        }
         // match (or legacy match)
         return {
           type: 'match',
@@ -117,6 +143,23 @@ export function mountCreate(container, initialData = null) {
       seconds: MINIGAME_SECONDS,
     };
   }
+  function defaultCorrectRound() {
+    return { type: 'correct', sentence: '', wrongIndex: 0, correction: '', seconds: MINIGAME_SECONDS };
+  }
+  function defaultOrderRound() {
+    return { type: 'order', sentences: ['', '', '', ''], seconds: MINIGAME_SECONDS };
+  }
+  function defaultConnectionsRound() {
+    return {
+      type: 'connections',
+      groups: [
+        { label: '', words: ['', '', '', ''] },
+        { label: '', words: ['', '', '', ''] },
+        { label: '', words: ['', '', '', ''] },
+      ],
+      seconds: 60,
+    };
+  }
 
   // ── Main render ───────────────────────────────────────────────────────────
 
@@ -155,6 +198,9 @@ export function mountCreate(container, initialData = null) {
             <button class="btn btn--secondary add-round-btn" id="add-type-btn">+ Type answer</button>
             <button class="btn btn--secondary add-round-btn" id="add-shuffle-btn">+ Word shuffle</button>
             <button class="btn btn--secondary add-round-btn" id="add-choice-btn">+ Multiple choice</button>
+            <button class="btn btn--secondary add-round-btn" id="add-correct-btn">+ Correct mistake</button>
+            <button class="btn btn--secondary add-round-btn" id="add-order-btn">+ Sentence order</button>
+            <button class="btn btn--secondary add-round-btn" id="add-connections-btn">+ Connections</button>
           </div>
 
           <div class="divider"></div>
@@ -188,17 +234,20 @@ export function mountCreate(container, initialData = null) {
 
   // ── Per-round card HTML ───────────────────────────────────────────────────
 
-  const ROUND_TYPE_LABELS = { fill: 'Fill-in-blank', select: 'Select word', type: 'Type answer', match: 'Match', shuffle: 'Word shuffle', choice: 'Multiple choice' };
-  const ROUND_TYPE_BADGE  = { fill: 'info', select: 'info', type: 'info', match: 'primary', shuffle: 'info', choice: 'info' };
+  const ROUND_TYPE_LABELS = { fill: 'Fill-in-blank', select: 'Select word', type: 'Type answer', match: 'Match', shuffle: 'Word shuffle', choice: 'Multiple choice', correct: 'Correct the Mistake', order: 'Sentence Order', connections: 'Connections' };
+  const ROUND_TYPE_BADGE  = { fill: 'info', select: 'info', type: 'info', match: 'primary', shuffle: 'info', choice: 'info', correct: 'info', order: 'info', connections: 'info' };
 
   function renderRoundCard(round, i) {
     const typeLabel  = ROUND_TYPE_LABELS[round.type] ?? 'Match';
     const badgeColor = ROUND_TYPE_BADGE[round.type]  ?? 'primary';
-    const body = round.type === 'fill'    ? renderFillBody(round, i)
-               : round.type === 'select'  ? renderSelectBody(round, i)
-               : round.type === 'type'    ? renderTypeBody(round, i)
-               : round.type === 'shuffle' ? renderShuffleBody(round, i)
-               : round.type === 'choice'  ? renderChoiceBody(round, i)
+    const body = round.type === 'fill'        ? renderFillBody(round, i)
+               : round.type === 'select'      ? renderSelectBody(round, i)
+               : round.type === 'type'        ? renderTypeBody(round, i)
+               : round.type === 'shuffle'     ? renderShuffleBody(round, i)
+               : round.type === 'choice'      ? renderChoiceBody(round, i)
+               : round.type === 'correct'     ? renderCorrectBody(round, i)
+               : round.type === 'order'       ? renderOrderBody(round, i)
+               : round.type === 'connections' ? renderConnectionsBody(round, i)
                : renderMatchBody(round, i);
     return `
       <div class="round-card" data-round-idx="${i}">
@@ -415,6 +464,105 @@ export function mountCreate(container, initialData = null) {
     `;
   }
 
+  function renderCorrectBody(round, ri) {
+    const words = round.sentence.trim() ? round.sentence.trim().split(/\s+/) : [];
+    const safeIdx = Math.min(round.wrongIndex, Math.max(0, words.length - 1));
+
+    const preview = words.length >= 2
+      ? words.map((w, i) =>
+          i === safeIdx
+            ? `<span style="background:var(--danger-dim);color:var(--danger);padding:1px 6px;border-radius:4px;font-weight:700;">${escHtml(w)}</span>`
+            : escHtml(w)
+        ).join(' ') + (round.correction.trim() ? ` → <strong>${escHtml(round.correction)}</strong>` : '')
+      : '';
+
+    return `
+      ${renderSecondsField(round, ri)}
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="correct-sentence-${ri}">Sentence (with the mistake)</label>
+        <textarea id="correct-sentence-${ri}" class="input fill-para-input" rows="3"
+          placeholder="She go to school every day."
+          data-correct-sentence="${ri}">${escHtml(round.sentence)}</textarea>
+        <div id="correct-preview-${ri}" class="form-hint" style="margin-top:4px;">
+          ${preview ? `Preview: ${preview}` : ''}
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="correct-idx-${ri}">Wrong word index (0-based)</label>
+        <span class="form-hint" style="display:block;margin-bottom:6px;">Which word position has the mistake? (0 = first word)</span>
+        <input id="correct-idx-${ri}" class="input" type="number" min="0" max="${Math.max(0, words.length - 1)}"
+          value="${safeIdx}" data-correct-index="${ri}" style="max-width:120px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label" for="correct-correction-${ri}">Correct word</label>
+        <input id="correct-correction-${ri}" class="input" type="text"
+          placeholder="goes" maxlength="100"
+          data-correct-correction="${ri}" value="${escHtml(round.correction)}">
+      </div>
+    `;
+  }
+
+  function renderOrderBody(round, ri) {
+    const rows = round.sentences.map((s, si) => `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;" data-order-row="${ri}" data-si="${si}">
+        <span style="font-size:0.8rem;font-weight:700;color:var(--text-3);flex-shrink:0;width:20px;">${si + 1}.</span>
+        <input class="input" type="text" placeholder="Sentence ${si + 1}"
+          maxlength="300" value="${escHtml(s)}"
+          data-order-sentence="${ri}" data-si="${si}" style="flex:1;">
+        <button class="pair-remove" data-order-remove="${ri}" data-si="${si}"
+          ${round.sentences.length <= 2 ? 'disabled' : ''} title="Remove">×</button>
+      </div>`).join('');
+
+    const nonEmpty = round.sentences.filter(s => s.trim()).length;
+
+    return `
+      ${renderSecondsField(round, ri)}
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Sentences (in correct order)</label>
+        <span class="form-hint" style="display:block;margin-bottom:8px;">Enter the sentences in the correct order — the game will shuffle them for players.</span>
+        <div id="order-sentences-${ri}">${rows}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+          <button class="add-pair-btn" data-order-add="${ri}"
+            ${round.sentences.length >= 8 ? 'disabled' : ''}>+ Add sentence</button>
+          <span class="form-hint">${nonEmpty}/${round.sentences.length} filled</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderConnectionsBody(round, ri) {
+    const groupRows = round.groups.map((g, gi) => {
+      const wordInputs = g.words.map((w, wi) => `
+        <input class="input" type="text" placeholder="Word ${wi + 1}" maxlength="60"
+          value="${escHtml(w)}"
+          data-conn-word="${ri}" data-gi="${gi}" data-wi="${wi}"
+          style="flex:1;min-width:60px;">`).join('');
+      return `
+        <div class="connections-group-row" data-gi="${gi}" style="margin-bottom:14px;padding:10px;background:rgba(255,255,255,0.04);border-radius:var(--radius);">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            <span style="font-size:0.78rem;font-weight:700;color:var(--text-3);flex-shrink:0;">Group ${gi + 1}</span>
+            <input class="input" type="text" placeholder="Category label" maxlength="60"
+              value="${escHtml(g.label)}"
+              data-conn-label="${ri}" data-gi="${gi}" style="flex:1;">
+            <button class="pair-remove" data-conn-remove="${ri}" data-gi="${gi}"
+              ${round.groups.length <= 3 ? 'disabled' : ''} title="Remove group">×</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">${wordInputs}</div>
+        </div>`;
+    }).join('');
+
+    return `
+      ${renderSecondsField(round, ri)}
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Groups</label>
+        <span class="form-hint" style="display:block;margin-bottom:8px;">Each group needs a category label and exactly 4 words. Players find the groups.</span>
+        <div id="connections-groups-${ri}">${groupRows}</div>
+        <button class="add-pair-btn" data-conn-add="${ri}"
+          ${round.groups.length >= 4 ? 'disabled' : ''} style="margin-top:4px;">+ Add group</button>
+      </div>
+    `;
+  }
+
   // ── Event listeners ───────────────────────────────────────────────────────
 
   function attachListeners() {
@@ -444,6 +592,9 @@ export function mountCreate(container, initialData = null) {
     container.querySelector('#add-type-btn').addEventListener('click', () => addRoundAndScroll(defaultTypeRound()));
     container.querySelector('#add-shuffle-btn').addEventListener('click', () => addRoundAndScroll(defaultShuffleRound()));
     container.querySelector('#add-choice-btn').addEventListener('click', () => addRoundAndScroll(defaultChoiceRound()));
+    container.querySelector('#add-correct-btn').addEventListener('click', () => addRoundAndScroll(defaultCorrectRound()));
+    container.querySelector('#add-order-btn').addEventListener('click', () => addRoundAndScroll(defaultOrderRound()));
+    container.querySelector('#add-connections-btn').addEventListener('click', () => addRoundAndScroll(defaultConnectionsRound()));
 
     // Delete round
     container.querySelectorAll('.round-card__del').forEach(btn => {
@@ -573,6 +724,103 @@ export function mountCreate(container, initialData = null) {
       });
     });
 
+    // Correct round: sentence textarea
+    container.querySelectorAll('[data-correct-sentence]').forEach(ta => {
+      const ri = Number(ta.dataset.correctSentence);
+      ta.addEventListener('input', () => {
+        rounds[ri].sentence = ta.value;
+        updateCorrectPreview(ri);
+      });
+    });
+
+    // Correct round: wrong index
+    container.querySelectorAll('[data-correct-index]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.correctIndex);
+        rounds[ri].wrongIndex = Math.max(0, parseInt(inp.value) || 0);
+        updateCorrectPreview(ri);
+      });
+    });
+
+    // Correct round: correction
+    container.querySelectorAll('[data-correct-correction]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.correctCorrection);
+        rounds[ri].correction = inp.value;
+        updateCorrectPreview(ri);
+      });
+    });
+
+    // Order round: sentence inputs
+    container.querySelectorAll('[data-order-sentence]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.orderSentence);
+        const si = Number(inp.dataset.si);
+        rounds[ri].sentences[si] = inp.value;
+      });
+    });
+
+    // Order round: add sentence button
+    container.querySelectorAll('[data-order-add]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ri = Number(btn.dataset.orderAdd);
+        if (rounds[ri].sentences.length >= 8) return;
+        rounds[ri].sentences.push('');
+        render();
+      });
+    });
+
+    // Order round: remove sentence button
+    container.querySelectorAll('[data-order-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ri = Number(btn.dataset.orderRemove);
+        const si = Number(btn.dataset.si);
+        if (rounds[ri].sentences.length <= 2) return;
+        rounds[ri].sentences.splice(si, 1);
+        render();
+      });
+    });
+
+    // Connections round: group label
+    container.querySelectorAll('[data-conn-label]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.connLabel);
+        const gi = Number(inp.dataset.gi);
+        rounds[ri].groups[gi].label = inp.value;
+      });
+    });
+
+    // Connections round: word inputs
+    container.querySelectorAll('[data-conn-word]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const ri = Number(inp.dataset.connWord);
+        const gi = Number(inp.dataset.gi);
+        const wi = Number(inp.dataset.wi);
+        rounds[ri].groups[gi].words[wi] = inp.value;
+      });
+    });
+
+    // Connections round: add group
+    container.querySelectorAll('[data-conn-add]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ri = Number(btn.dataset.connAdd);
+        if (rounds[ri].groups.length >= 4) return;
+        rounds[ri].groups.push({ label: '', words: ['', '', '', ''] });
+        render();
+      });
+    });
+
+    // Connections round: remove group
+    container.querySelectorAll('[data-conn-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ri = Number(btn.dataset.connRemove);
+        const gi = Number(btn.dataset.gi);
+        if (rounds[ri].groups.length <= 3) return;
+        rounds[ri].groups.splice(gi, 1);
+        render();
+      });
+    });
+
     // Per-round seconds
     container.querySelectorAll('[data-round-seconds]').forEach(inp => {
       inp.addEventListener('input', () => {
@@ -688,6 +936,26 @@ export function mountCreate(container, initialData = null) {
     }
   }
 
+  function updateCorrectPreview(ri) {
+    const previewEl = container.querySelector(`#correct-preview-${ri}`);
+    if (!previewEl) return;
+    const r = rounds[ri];
+    const words = r.sentence.trim() ? r.sentence.trim().split(/\s+/) : [];
+    if (words.length < 2) {
+      previewEl.innerHTML = r.sentence.trim()
+        ? `<span style="color:var(--warning);">Need at least 2 words</span>`
+        : '';
+      return;
+    }
+    const idx = Math.min(r.wrongIndex, words.length - 1);
+    const preview = words.map((w, i) =>
+      i === idx
+        ? `<span style="background:var(--danger-dim);color:var(--danger);padding:1px 6px;border-radius:4px;font-weight:700;">${escHtml(w)}</span>`
+        : escHtml(w)
+    ).join(' ') + (r.correction.trim() ? ` → <strong>${escHtml(r.correction)}</strong>` : '');
+    previewEl.innerHTML = `Preview: ${preview}`;
+  }
+
   // ── Validation & submit ───────────────────────────────────────────────────
 
   async function handleSubmit() {
@@ -767,6 +1035,56 @@ export function mountCreate(container, initialData = null) {
           showError(`Round ${i + 1} (Multiple choice): Mark at least one answer as correct.`);
           return;
         }
+      } else if (r.type === 'correct') {
+        const words = r.sentence.trim().split(/\s+/).filter(Boolean);
+        if (words.length < 2) {
+          showError(`Round ${i + 1} (Correct the Mistake) sentence needs at least 2 words.`);
+          return;
+        }
+        if (r.wrongIndex < 0 || r.wrongIndex >= words.length) {
+          showError(`Round ${i + 1} (Correct the Mistake): Wrong word index must be 0–${words.length - 1}.`);
+          return;
+        }
+        if (!r.correction.trim()) {
+          showError(`Round ${i + 1} (Correct the Mistake): Correct word is required.`);
+          return;
+        }
+      } else if (r.type === 'order') {
+        const filled = r.sentences.filter(s => s.trim());
+        if (filled.length < 2) {
+          showError(`Round ${i + 1} (Sentence Order) needs at least 2 sentences.`);
+          return;
+        }
+        if (r.sentences.some(s => !s.trim())) {
+          showError(`Round ${i + 1} (Sentence Order): All sentence fields must be filled.`);
+          return;
+        }
+        const unique = new Set(r.sentences.map(s => s.trim()));
+        if (unique.size < 2) {
+          showError(`Round ${i + 1} (Sentence Order): Sentences must be distinct.`);
+          return;
+        }
+      } else if (r.type === 'connections') {
+        if (r.groups.length < 3 || r.groups.length > 4) {
+          showError(`Round ${i + 1} (Connections) needs 3 or 4 groups.`);
+          return;
+        }
+        for (let gi = 0; gi < r.groups.length; gi++) {
+          const g = r.groups[gi];
+          if (!g.label.trim()) {
+            showError(`Round ${i + 1} (Connections): Group ${gi + 1} needs a category label.`);
+            return;
+          }
+          if (g.words.some(w => !w.trim())) {
+            showError(`Round ${i + 1} (Connections): Group ${gi + 1} must have exactly 4 non-empty words.`);
+            return;
+          }
+        }
+        const allWords = r.groups.flatMap(g => g.words.map(w => w.trim().toLowerCase()));
+        if (new Set(allWords).size < allWords.length) {
+          showError(`Round ${i + 1} (Connections): All words must be unique across groups.`);
+          return;
+        }
       }
     }
 
@@ -805,6 +1123,29 @@ export function mountCreate(container, initialData = null) {
             type: 'choice',
             question: r.question,
             answers: r.answers.map(a => ({ text: a.text.trim(), correct: !!a.correct })),
+            seconds: r.seconds,
+          };
+        }
+        if (r.type === 'correct') {
+          return {
+            type:       'correct',
+            sentence:   r.sentence.trim(),
+            wrongIndex: r.wrongIndex,
+            correction: r.correction.trim(),
+            seconds:    r.seconds,
+          };
+        }
+        if (r.type === 'order') {
+          return {
+            type:      'order',
+            sentences: r.sentences.map(s => s.trim()),
+            seconds:   r.seconds,
+          };
+        }
+        if (r.type === 'connections') {
+          return {
+            type:    'connections',
+            groups:  r.groups.map(g => ({ label: g.label.trim(), words: g.words.map(w => w.trim()) })),
             seconds: r.seconds,
           };
         }

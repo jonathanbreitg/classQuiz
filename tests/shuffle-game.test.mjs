@@ -223,6 +223,30 @@ await test('2-word sentence: renders 2 tiles and 2 slots', async () => {
   assert(slots === 2, `Expected 2 slots, got ${slots}`);
 });
 
+// ── Drag disabled after reveal ────────────────────────────────────────────
+await nav();
+
+await test('drag/tap is disabled after reveal — slots cannot be moved', async () => {
+  // Place one tile, then reveal
+  const tile = await page.$('.shuffle-tile');
+  await tile.tap();
+  await new Promise(r => setTimeout(r, 80));
+  const slot0 = await page.$('.shuffle-slot');
+  await slot0.tap();
+  await new Promise(r => setTimeout(r, 100));
+  const textBefore = await page.$eval('.shuffle-slot', e => e.textContent.trim());
+  await page.evaluate(() => { window.__game.forceSubmit(); window.__game.reveal(); });
+  await new Promise(r => setTimeout(r, 100));
+
+  // Try to tap the slot to pick it back up — should do nothing
+  await slot0.tap();
+  await new Promise(r => setTimeout(r, 80));
+  const textAfter = await page.$eval('.shuffle-slot', e => e.textContent.trim());
+  assert(textAfter === textBefore, `Slot text changed after reveal tap: "${textBefore}" → "${textAfter}"`);
+  const count = await page.evaluate(() => window.__results.length);
+  assert(count === 1, `Expected 1 submit total, got ${count}`);
+});
+
 // ── Summary ───────────────────────────────────────────────────────────────
 await browser.close();
 server.close();

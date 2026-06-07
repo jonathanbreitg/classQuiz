@@ -115,6 +115,86 @@ describe('normalizeTemplate', () => {
     expect(norm.rounds[3].blanksVisible).toBeUndefined();
   });
 
+  // ── shuffle round defaults ───────────────────────────────────────────────────
+
+  it('adds imageUrl and sentence defaults to shuffle rounds', () => {
+    const t = { rounds: [{ type: 'shuffle' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].imageUrl).toBe('');
+    expect(norm.rounds[0].sentence).toBe('');
+  });
+
+  it('does not override existing shuffle fields', () => {
+    const t = { rounds: [{ type: 'shuffle', imageUrl: 'http://x.com/img.png', sentence: 'Hello world' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].imageUrl).toBe('http://x.com/img.png');
+    expect(norm.rounds[0].sentence).toBe('Hello world');
+  });
+
+  // ── choice round defaults ────────────────────────────────────────────────────
+
+  it('adds question and answers defaults to choice rounds', () => {
+    const t = { rounds: [{ type: 'choice' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].question).toBe('');
+    expect(norm.rounds[0].answers).toEqual([]);
+  });
+
+  it('does not override existing choice fields', () => {
+    const answers = [{ text: 'Yes', correct: true }];
+    const t = { rounds: [{ type: 'choice', question: 'Q?', answers }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].question).toBe('Q?');
+    expect(norm.rounds[0].answers).toEqual(answers);
+  });
+
+  // ── correct round defaults ───────────────────────────────────────────────────
+
+  it('adds wrongIndex and correction defaults to correct rounds', () => {
+    const t = { rounds: [{ type: 'correct', sentence: 'She go home.' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].wrongIndex).toBe(0);
+    expect(norm.rounds[0].correction).toBe('');
+    expect(norm.rounds[0].sentence).toBe('She go home.');
+  });
+
+  it('does not override existing correct round fields', () => {
+    const t = { rounds: [{ type: 'correct', sentence: 'x', wrongIndex: 2, correction: 'goes' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].wrongIndex).toBe(2);
+    expect(norm.rounds[0].correction).toBe('goes');
+  });
+
+  // ── order round defaults ─────────────────────────────────────────────────────
+
+  it('adds sentences default to order rounds', () => {
+    const t = { rounds: [{ type: 'order' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].sentences).toEqual([]);
+  });
+
+  it('does not override existing order sentences', () => {
+    const sentences = ['First.', 'Second.'];
+    const t = { rounds: [{ type: 'order', sentences }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].sentences).toEqual(sentences);
+  });
+
+  // ── connections round defaults ───────────────────────────────────────────────
+
+  it('adds groups default to connections rounds', () => {
+    const t = { rounds: [{ type: 'connections' }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].groups).toEqual([]);
+  });
+
+  it('does not override existing connections groups', () => {
+    const groups = [{ label: 'G1', words: ['a', 'b', 'c', 'd'] }];
+    const t = { rounds: [{ type: 'connections', groups }] };
+    const norm = normalizeTemplate(t);
+    expect(norm.rounds[0].groups).toEqual(groups);
+  });
+
   // ── Top-level template fields preserved ─────────────────────────────────────
 
   it('preserves top-level fields like title and config', () => {

@@ -206,6 +206,34 @@ export function mountHost(container, code) {
               </div>`).join('')}
           </div>
         </div>`;
+    } else if (roundType === 'correct') {
+      const words = (round.sentence ?? '').trim().split(/\s+/);
+      extraContent = `
+        <div class="host-correct-view">
+          <div class="host-correct-label">Find the mistake</div>
+          <div class="host-correct-sentence">
+            ${words.map((w, i) =>
+              `<span class="host-correct-word${i === round.wrongIndex ? ' host-correct-word--hint' : ''}">${esc(w)}</span>`
+            ).join(' ')}
+          </div>
+        </div>`;
+    } else if (roundType === 'order') {
+      const sentences = round.sentences ?? [];
+      extraContent = `
+        <div class="host-order-view">
+          <div class="host-order-label">Put in order (${sentences.length} sentences)</div>
+          ${sentences.map((s, i) => `<div class="host-order-sentence"><span class="host-order-num">${i + 1}</span>${esc(s)}</div>`).join('')}
+        </div>`;
+    } else if (roundType === 'connections') {
+      const groups = round.groups ?? [];
+      const allWords = groups.flatMap(g => g.words ?? []).sort(() => Math.random() - 0.5);
+      extraContent = `
+        <div class="host-connections-view">
+          <div class="host-connections-label">Find the connections</div>
+          <div class="host-connections-grid">
+            ${allWords.map(w => `<div class="host-connections-chip">${esc(w)}</div>`).join('')}
+          </div>
+        </div>`;
     } else {
       extraContent = `
         <div style="text-align:center;">
@@ -252,6 +280,13 @@ export function mountHost(container, code) {
     if (roundTick) return;
     const totalMs    = cfg.minigameSeconds * 1000;
     const cntdownMs  = READY_COUNTDOWN_SECONDS * 1000;
+
+    // Show countdown synchronously so the overlay appears before the first interval
+    // fires (100ms later), preventing the timer from flickering visible.
+    const preElapsed = serverNow() - round.startAt;
+    if (preElapsed < cntdownMs) {
+      showCountdown(Math.ceil((cntdownMs - preElapsed) / 1000));
+    }
 
     roundTick = setInterval(() => {
       const now     = serverNow();

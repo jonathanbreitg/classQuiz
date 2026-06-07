@@ -12,9 +12,12 @@ import { createSelectGame } from '../components/selectGame.js';
 import { createTypeGame } from '../components/typeGame.js';
 import { createShuffleGame } from '../components/shuffleGame.js';
 import { createChoiceGame } from '../components/choiceGame.js';
+import { createCorrectGame } from '../components/correctGame.js';
+import { createOrderGame } from '../components/orderGame.js';
+import { createConnectionsGame } from '../components/connectionsGame.js';
 import { createPodium } from '../components/podium.js';
 import { dedupeNickname, validateNickname } from '../lib/nicknames.js';
-import { gradeRound, gradeFillRound, gradeShuffleRound, gradeChoiceRound } from '../lib/grading.js';
+import { gradeRound, gradeFillRound, gradeShuffleRound, gradeChoiceRound, gradeCorrectRound, gradeOrderRound, gradeConnectionsRound } from '../lib/grading.js';
 import { parseParagraph } from '../lib/fillParsing.js';
 import { computeTimeBonus, computeRoundScore, computeTotalScore } from '../lib/scoring.js';
 import { rankPlayers } from '../lib/ranking.js';
@@ -322,6 +325,29 @@ export function mountPlay(container, code) {
           handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
         },
       });
+    } else if (round.type === 'correct') {
+      gameInstance = createCorrectGame({
+        sentence:   roundDef.sentence,
+        wrongIndex: roundDef.wrongIndex,
+        correction: roundDef.correction,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else if (round.type === 'order') {
+      gameInstance = createOrderGame({
+        sentences: roundDef.sentences,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
+    } else if (round.type === 'connections') {
+      gameInstance = createConnectionsGame({
+        groups: roundDef.groups,
+        onSubmit(answers, finished) {
+          handleSubmit(roundIdx, round, roundDef, cfg, answers, finished);
+        },
+      });
     } else {
       // match round
       const pairs = (round.pairIndices ?? []).map(i => (roundDef.pairsPool ?? [])[i]);
@@ -416,6 +442,15 @@ export function mountPlay(container, code) {
       rafId = requestAnimationFrame(frame);
     }
 
+    // Show countdown synchronously so the overlay appears before the first paint,
+    // preventing the timer bar from flickering visible for one frame.
+    const preElapsed = serverNow() - round.startAt;
+    if (preElapsed < cntdownMs) {
+      const preN = Math.ceil((cntdownMs - preElapsed) / 1000);
+      lastCdN = preN;
+      showCd(preN);
+    }
+
     // Store cancel handle in tickInterval slot so clearTick() works
     tickInterval = { _raf: null };
     rafId = requestAnimationFrame(frame);
@@ -477,6 +512,28 @@ export function mountPlay(container, code) {
         : 0;
       const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
       roundScore = normalized + timeBonus;
+    } else if (round.type === 'correct') {
+      totalItems   = 1;
+      correctCount = gradeCorrectRound(submittedData, roundDef.wrongIndex);
+      const normalized = Math.round(correctCount / totalItems * FILL_SCORE_MAX);
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
+    } else if (round.type === 'order') {
+      totalItems   = (roundDef.sentences ?? []).length;
+      correctCount = gradeOrderRound(submittedData, roundDef.sentences ?? []);
+      const normalized = totalItems > 0
+        ? Math.round(correctCount / totalItems * FILL_SCORE_MAX)
+        : 0;
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
+    } else if (round.type === 'connections') {
+      totalItems   = (roundDef.groups ?? []).length;
+      correctCount = gradeConnectionsRound(submittedData, totalItems);
+      const normalized = totalItems > 0
+        ? Math.round(correctCount / totalItems * FILL_SCORE_MAX)
+        : 0;
+      const timeBonus = computeTimeBonus(finished, remainingMs, cfg.minigameSeconds, cfg.bonusMax);
+      roundScore = normalized + timeBonus;
     } else {
       // match
       totalItems   = 6;
@@ -513,7 +570,11 @@ export function mountPlay(container, code) {
       ? `${r.correctPairs ?? 0}/${total} blanks correct`
       : roundType === 'shuffle'
         ? `${r.correctPairs ?? 0}/${total} words correct`
-        : `${r.correctPairs ?? 0}/${total} correct`;
+        : roundType === 'order'
+          ? `${r.correctPairs ?? 0}/${total} sentences correct`
+          : roundType === 'connections'
+            ? `${r.correctPairs ?? 0}/${total} groups found`
+            : `${r.correctPairs ?? 0}/${total} correct`;
     const timeBonus = Math.max(0, (r.score ?? 0) - (r.correctPairs ?? 0));
     const bonusTxt  = r.finished
       ? `<span style="color:var(--primary)">${timeBonus >= 0 ? '+' : ''}${timeBonus}</span> bonus`

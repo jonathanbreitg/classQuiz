@@ -46,3 +46,25 @@ export function gradeFillRound(playerAnswers, correctAnswers) {
 function normalizeWord(s) {
   return String(s).toLowerCase().replace(/[^a-z]/g, '');
 }
+
+// playerAnswers: { tapped: number } or {} (timer ended before correct tap)
+// wrongIndex: number
+export function gradeCorrectRound(playerAnswers, wrongIndex) {
+  return playerAnswers.tapped === wrongIndex ? 1 : 0;
+}
+
+// playerAnswers: { [slotIdx]: sentenceText }
+// correctSentences: string[]
+export function gradeOrderRound(playerAnswers, correctSentences) {
+  let correct = 0;
+  for (let i = 0; i < correctSentences.length; i++) {
+    if ((playerAnswers[i] ?? '').trim() === correctSentences[i].trim()) correct++;
+  }
+  return correct;
+}
+
+// playerAnswers: { solved: number[] } — group indices solved by player
+// totalGroups: number
+export function gradeConnectionsRound(playerAnswers, totalGroups) {
+  return (playerAnswers.solved ?? []).length;
+}

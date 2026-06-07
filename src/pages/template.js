@@ -9,6 +9,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { generateUniqueCode, randomUUID } from '../lib/codeGen.js';
 import { sampleRounds } from '../lib/poolSampling.js';
+import { buildRtdbRounds } from '../lib/buildRtdbRounds.js';
 import { STALE_MATCH_HOURS } from '../lib/constants.js';
 import { findStaleCodes } from '../lib/pruning.js';
 import { normalizeTemplate } from '../lib/templateNormalize.js';
@@ -92,33 +93,7 @@ function render(container, template) {
         return snap.exists() && snap.val() !== 'finished';
       });
 
-      // Build RTDB round entries: match rounds get precomputed pairIndices,
-      // paragraph rounds (fill, select, type) just need type and startAt.
-      const rtdbRounds = template.rounds.map(r => {
-        if (r.type === 'fill' || r.type === 'select' || r.type === 'type') {
-          const base = { type: r.type, startAt: null };
-          if (r.seconds != null) base.seconds = r.seconds;
-          return base;
-        }
-        if (r.type === 'shuffle') {
-          const base = { type: 'shuffle', startAt: null, imageUrl: r.imageUrl ?? '' };
-          if (r.seconds != null) base.seconds = r.seconds;
-          return base;
-        }
-        if (r.type === 'choice') {
-          const base = { type: 'choice', startAt: null, question: r.question ?? '', answers: r.answers ?? [] };
-          if (r.seconds != null) base.seconds = r.seconds;
-          return base;
-        }
-        // match
-        const pool = r.pairsPool ?? [];
-        const pairIndices = pool.length >= 6
-          ? sampleRounds(pool.length, 1)[0]
-          : Array.from({ length: pool.length }, (_, i) => i);
-        const base = { type: 'match', pairIndices, startAt: null };
-        if (r.seconds != null) base.seconds = r.seconds;
-        return base;
-      });
+      const rtdbRounds = buildRtdbRounds(template.rounds);
 
       const hostToken = randomUUID();
       localStorage.setItem(`hostToken_${code}`, hostToken);

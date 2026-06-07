@@ -55,9 +55,9 @@ await test('page renders with a title input', async () => {
   assert(el !== null, 'Title input should exist');
 });
 
-await test('all 6 add-round buttons exist', async () => {
+await test('all 9 add-round buttons exist', async () => {
   const btns = await page.$$('.add-round-btn');
-  assert(btns.length === 6, `Expected 6 add-round buttons, got ${btns.length}`);
+  assert(btns.length === 9, `Expected 9 add-round buttons, got ${btns.length}`);
 });
 
 await test('add-round button text does not overflow on 390px mobile', async () => {
@@ -103,6 +103,35 @@ await test('clicking "+ Type answer" adds a type round card', async () => {
   assert(para !== null, 'Type round should have a paragraph textarea');
 });
 
+await test('clicking "+ Correct mistake" adds a correct round card with required fields', async () => {
+  await page.click('#add-correct-btn');
+  await page.waitForFunction(() => document.querySelectorAll('.round-card').length >= 5);
+  const sentenceField = await page.$('[data-correct-sentence="4"]');
+  const indexField    = await page.$('[data-correct-index="4"]');
+  const corrField     = await page.$('[data-correct-correction="4"]');
+  assert(sentenceField !== null, 'Correct round should have a sentence textarea');
+  assert(indexField    !== null, 'Correct round should have a wrong-index input');
+  assert(corrField     !== null, 'Correct round should have a correction input');
+});
+
+await test('clicking "+ Sentence order" adds an order round card with sentence inputs', async () => {
+  await page.click('#add-order-btn');
+  await page.waitForFunction(() => document.querySelectorAll('.round-card').length >= 6);
+  const sentenceInputs = await page.$$('[data-order-sentence="5"]');
+  assert(sentenceInputs.length >= 2, `Order round should have ≥2 sentence inputs, got ${sentenceInputs.length}`);
+  const addBtn = await page.$('[data-order-add="5"]');
+  assert(addBtn !== null, 'Order round should have an "Add sentence" button');
+});
+
+await test('clicking "+ Connections" adds a connections round card with group/word inputs', async () => {
+  await page.click('#add-connections-btn');
+  await page.waitForFunction(() => document.querySelectorAll('.round-card').length >= 7);
+  const labelInputs = await page.$$('[data-conn-label="6"]');
+  const wordInputs  = await page.$$('[data-conn-word="6"]');
+  assert(labelInputs.length >= 3, `Connections round should have ≥3 group label inputs, got ${labelInputs.length}`);
+  assert(wordInputs.length === 12, `Connections round should have 12 word inputs (3×4), got ${wordInputs.length}`);
+});
+
 await test('no "blanks visible" field in any round card', async () => {
   const bvInputs = await page.$$('[data-fill-bv],[data-select-bv],[data-type-bv]');
   assert(bvInputs.length === 0, `Found ${bvInputs.length} blanksVisible inputs — should be removed`);
@@ -112,11 +141,14 @@ await test('no "blanks visible" field in any round card', async () => {
   assert(labels === 0, `Found ${labels} "blanks visible" labels`);
 });
 
-// ── 3. All 4 round types: seconds default to 20 + screenshot ─────────────────
-await test('all round types have seconds fields defaulting to 20', async () => {
-  const vals = await page.$$eval('[data-round-seconds]', els => els.map(e => e.value));
-  assert(vals.length === 4, `Expected 4 seconds fields, got ${vals.length}`);
-  assert(vals.every(v => v === '20'), `All should default to 20, got ${JSON.stringify(vals)}`);
+// ── 3. Round type seconds defaults ───────────────────────────────────────────
+await test('match/fill/select/type/correct/order rounds default to 20s, connections to 60s', async () => {
+  const allVals = await page.$$eval('[data-round-seconds]', els => els.map(e => e.value));
+  // 7 cards: match(0), fill(1), select(2), type(3), correct(4), order(5), connections(6)
+  assert(allVals.length === 7, `Expected 7 seconds fields, got ${allVals.length}`);
+  const first6 = allVals.slice(0, 6);
+  assert(first6.every(v => v === '20'), `First 6 rounds should default to 20s, got ${JSON.stringify(first6)}`);
+  assert(allVals[6] === '60', `Connections should default to 60s, got ${allVals[6]}`);
 });
 
 await screenshot(page, SS_DIR, 'create-all-rounds');

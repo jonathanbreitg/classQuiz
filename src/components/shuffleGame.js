@@ -132,6 +132,7 @@ export function createShuffleGame({ sentence, onSubmit }) {
   // ── Placement logic ───────────────────────────────────────────────────────
 
   function placeTile(ti, si) {
+    if (disabled) return;
     if (tileSlot[ti] !== null) removeTileFromSlot(tileSlot[ti]);
     if (slotTile[si] !== null) removeTileFromSlot(si);
 
